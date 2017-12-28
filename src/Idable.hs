@@ -1,0 +1,33 @@
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts #-}
+
+module Idable where
+
+class Eq (Id a) => Idable a where
+  type Id a
+  ident :: a -> Id a
+
+instance Eq a => Idable (a, b) where
+  type Id (a, b) = a
+  ident = fst
+
+deleteIdable :: Idable a => Id a -> [a] -> [a]
+deleteIdable x xs = filter (\y -> x /= ident y) xs
+
+lookupId :: Idable a => Id a -> [a] -> Maybe a
+lookupId id xs = lookup id $ zip (map ident xs) xs
+
+lookupIdT :: (Foldable t, Idable a) => Id a -> t a -> Maybe a
+lookupIdT id xs = foldl f Nothing xs
+  where
+    f x y = if ident y == id 
+      then Just y
+      else x
+
+-- Assume f preserves ident
+modifyIdable :: Idable a => Id a -> (a -> a) -> [a] -> [a]
+modifyIdable id f xs = xs'
+  where
+    xs' = case lookupId id xs of
+      Just y -> (f y) : deleteIdable id xs
+      Nothing -> xs
