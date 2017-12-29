@@ -1,98 +1,128 @@
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module Pony where
 
 import Data.List
 import Data.Maybe (fromJust)
+import Control.Monad
 
-type ActorId = Int
-type ObjectId = Int
-type FieldId = Int
+import Idable
 
-data ActorState = ActorCollecting | ActorSending | ActorReceving | ActorBehaviour
+newtype ActorId = ActorId Int deriving (Eq, Show, Num)
+newtype ObjectId = ObjectId Int deriving (Eq, Show, Num)
+newtype ActFieldId = ActFieldId Int deriving (Eq, Show, Num)
+newtype ObjFieldId = ObjFieldId Int deriving (Eq, Show, Num)
 
-data Actor = Actor 
+data ObjectDescr = ObjectDescr ActorId ObjectId deriving (Eq, Show)
+
+incId = (+1)
+
+data Path = Path ActFieldId [ObjFieldId]
+
+data ActorState = 
+  ActorCollecting | ActorSending | ActorReceving | ActorBehaviour | ActorIdle
+  deriving Show
+
+data Actor a = Actor
   { getActorId :: ActorId
-  , getFields :: [(FieldId, ObjectId)]
+  , getActFields :: [(ActFieldId, ObjectDescr)]
+  , freshFieldId :: ActFieldId
   , getActorState :: ActorState
-  }
+  , getObjects :: [Object a] 
+  } deriving (Functor, Foldable)
 
-data Object = Object 
+data Object a = Object 
   { getOwner :: ActorId
+  , getObjFields :: [(ObjFieldId, ObjectDescr)]
   , getObjectId :: ObjectId
+  , getItem :: a
+  } deriving (Functor, Foldable)
+
+data Config a = Config 
+  { getActors :: [Actor a]
+  , freshActorId :: ActorId
+  , freshObjectId :: ObjectId
   }
 
-data DiGraph a b = DiGraph [(a, b)] [(a, a)]
-
-data Config = Config [Actor] (DiGraph ObjectId Object)
-
-freshId :: Config -> ObjectId
-freshId (Config _ (DiGraph xs _)) = (+1) $ maximum $ map fst xs
-
-updateField :: FieldId -> ObjectId -> Actor -> Actor
-updateField fId oId (Actor aId fs state) = Actor aId fs' state
-  where
-    fs' = modifyIdable fId (const (fId, oId)) fs
-
-
-createObject :: ActorId -> Config -> (ObjectId, Config)
-createObject aId cfg@(Config as (DiGraph os r)) 
-  = (newId, Config as (DiGraph ((newId, new):os) r))
-  where
-    newId = freshId cfg
-    new = Object aId newId
-
--- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
--- Things an actor can do
--- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
-assignActFieldNew :: ActorId -> FieldId -> Config -> Config
-assignActFieldNew aId fId cfg = Config as' g
-  where
-    (newId, Config as g) = createObject aId cfg
-    as' = modifyIdable aId (\a -> updateField fId newId a) as 
-
-assignActField :: ActorId -> FieldId -> FieldId -> Config -> Config
-assignActField aId sourceId targetId (Config as g) = Config as' g
-  where
-    -- Get object Id
-    -- Throws if actor and sourceId doesn't exist
-    actor = fromJust $ lookupId aId as
-    oId = snd $ fromJust $ lookupId sourceId $ getFields actor
-    as' = modifyIdable aId (\a -> updateField targetId oId a) as
-
--- assignObjField :: ActorId -> FieldId -> Config
-
--- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
--- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
-
-class Eq (Id a) => Idable a where
-  type Id a
-  ident :: a -> Id a
-
-instance Eq a => Idable (a, b) where
-  type Id (a, b) = a
-  ident = fst
-
-instance Idable Actor where
-  type Id Actor = ActorId
+instance Idable (Actor a) where
+  type Id (Actor a) = ActorId
   ident = getActorId
 
-instance Idable Object where
-  type Id Object = ObjectId
+instance Idable (Object a) where
+  type Id (Object a) = ObjectId
   ident = getObjectId
 
-deleteIdable :: Idable a => Id a -> [a] -> [a]
-deleteIdable x xs = filter (\y -> x /= ident y) xs
+deriving instance Show a => Show (Object a)
+deriving instance Show a => Show (Actor a)
+deriving instance Show a => Show (Config a)
 
-lookupId :: Idable a => Id a -> [a] -> Maybe a
-lookupId id xs = lookup id $ zip (map ident xs) xs
+o1 = Object 1 [] 1 ()
+a1 = Actor 1 [(1, ObjectDescr 1 1)] 2 ActorIdle [o1]
+cfg1 = Config [a1] 2 2
 
--- Assume f preserves ident
-modifyIdable :: Idable a => Id a -> (a -> a) -> [a] -> [a]
-modifyIdable id f xs = xs'
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+-- -- Things an actor can do
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+
+assignActFieldNew :: a -> ActorId -> ActFieldId -> Config a -> Config a
+assignActFieldNew x aId fId cfg = cfg''
   where
-    xs' = case lookupId id xs of
-      Just y -> (f y) : deleteIdable id xs
-      Nothing -> xs
+    --(oId, cfg') = freshObjectId
+    --oDescr = ObjectDescr aId oId
+    (oDescr, cfg') = createObject x aId cfg
+    as = getActors cfg'
+    as' = modifyIdable aId (\a -> updateField fId oDescr a) as
+    cfg'' = cfg' {getActors = as'}
+
+reassignActField :: ActorId -> ActFieldId -> Path -> Config a -> Config a
+reassignActField aId targetId path cfg = cfg {getActors = as'}
+  where
+   as = getActors cfg
+   actor = fromJust $ lookupId aId as
+   oId = undefined
+   as' = modifyIdable aId (\a -> updateField targetId oId a) as
+
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+
+lookupObject :: ObjectDescr -> Config a -> Maybe (Object a)
+lookupObject (ObjectDescr aid oid) Config{..} = do
+  act <- lookupId aid getActors
+  lookupId oid (getObjects act)
+    
+lookupPath :: Path -> ActorId -> Config a -> Maybe ObjectDescr
+lookupPath (Path afd ofds) aid cfg@Config{..} = do
+  act <- lookupId aid getActors
+  (_, oDescrInit) <- lookupId afd $ getActFields act
+
+  let f objDescr field = do {
+    o <- lookupObject objDescr cfg;
+    (_, ret) <- lookupId field $ getObjFields o;
+    return ret
+  }
+  foldM f oDescrInit ofds
+
+updateField :: ActFieldId -> ObjectDescr -> Actor a -> Actor a
+updateField fId odescr act@Actor{..} = act {getActFields = fs'}
+  where
+    fs' = modifyIdable fId (const (fId, odescr)) getActFields
+
+createObject :: a -> ActorId -> Config a -> (ObjectDescr, Config a)
+createObject x aId cfg
+  = (newDescr, cfg'')
+  where
+    (newId, cfg') = modifyFreshObjectId cfg
+    newDescr = ObjectDescr aId newId
+    new = Object aId [] newId x
+    as' = modifyIdable aId addObjectToActor (getActors cfg')
+    cfg'' = cfg' {getActors = as'}
+    addObjectToActor a = a {getObjects = new : (getObjects a)}
+
+modifyFreshObjectId :: Config a -> (ObjectId, Config a)
+modifyFreshObjectId cfg@Config{..} =
+  (freshObjectId, cfg {freshObjectId = incId freshObjectId})
