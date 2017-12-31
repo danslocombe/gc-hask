@@ -56,11 +56,17 @@ data Config a = Config
 
 instance Idable (Actor a) where
   type Id (Actor a) = ActorId
+  type IdTrans (Actor a) = Actor a
   ident = getActorId
+  idTrans = id
+  idTransRev = seq
 
 instance Idable (Object a) where
   type Id (Object a) = ObjectId
+  type IdTrans (Object a) = Object a
   ident = getObjectId
+  idTrans = id
+  idTransRev = seq
 
 deriving instance Show a => Show (Object a)
 deriving instance Show a => Show (Actor a)

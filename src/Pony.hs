@@ -33,8 +33,8 @@ import PonyTypes
 -- Rendering to GraphViz
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
-renderingThing :: Applicative m => Config a -> m GVP.Doc 
-renderingThing = GVP.text . GVP.renderDot . toDot . defaultVis . toGraph
+draw :: Applicative m => Config a -> m GVP.Doc 
+draw = GVP.text . GVP.renderDot . toDot . defaultVis . toGraph
 
 defaultVis :: (Graph gr) => gr (Int, Bool) el -> DotGraph Node
 defaultVis = graphToDot dotparams
@@ -102,8 +102,8 @@ cfg5 = sendObject 1 1 2 2 cfg4
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
 -- Assign newly created object to an actor's field
-assignActFieldNew :: a -> ActorId -> Path -> Config a -> Config a
-assignActFieldNew x aId path cfg = cfg''
+assignActFieldNew :: a -> ActorId -> ActFieldId -> Config a -> Config a
+assignActFieldNew x aId fId cfg = cfg''
    where
     (oDescr, cfg') = createObject x aId cfg
     as = getActors cfg'
@@ -111,7 +111,7 @@ assignActFieldNew x aId path cfg = cfg''
     cfg'' = cfg' {getActors = as'}
 
 -- Assign object at some relative path to a field of an actor
-reassignActField :: ActorId -> ActFieldId -> Path -> Config a -> Maybe (Config a)
+reassignActField :: ActorId -> ActFieldId -> Path -> Config a -> Config a
 reassignActField aId targetId path cfg = cfg {getActors = as'}
   where
     as = getActors cfg
@@ -172,11 +172,11 @@ lookupObject (ObjectDescr aid oid) Config{..} = do
 lookupPath :: Path -> ActorId -> Config a -> Maybe ObjectDescr
 lookupPath (Path afd ofds) aid cfg@Config{..} = do
   act <- lookupId aid getActors
-  (_, _, oDescrInit) <- lookupId afd $ getActFields act
+  (_, oDescrInit) <- lookupId afd $ getActFields act
 
   let f objDescr field = do {
     o <- lookupObject objDescr cfg;
-    (_, _, ret) <- lookupId field $ getObjFields o;
+    (_, ret) <- lookupId field $ getObjFields o;
     return ret
   }
   foldM f oDescrInit ofds
@@ -185,7 +185,7 @@ updateField :: ActFieldId -> ObjectDescr -> Actor a -> Actor a
 updateField fId odescr act@Actor{..} = act {getActFields = fs'}
   where
     -- TODO: need to have correct capabilities
-    fs' = modifyIdable fId (const (fId, Iso, odescr)) getActFields
+    fs' = modifyIdable fId (const (Iso, odescr)) getActFields
 
 createObject :: a -> ActorId -> Config a -> (ObjectDescr, Config a)
 createObject x aId cfg
@@ -207,4 +207,4 @@ modifyFreshObjectId cfg@Config{..} =
 setObjField :: ObjFieldId -> ObjectDescr -> Object a -> Object a
 setObjField fid odescr obj@Object{..} = obj {getObjFields = fs'}
   where
-    fs' = modifyIdable fid (\(_, k, _) -> (fid, k, odescr)) getObjFields
+    fs' = modifyIdable fid (\(k, _) -> (k, odescr)) getObjFields

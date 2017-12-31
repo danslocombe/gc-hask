@@ -1,45 +1,53 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ExistentialQuantification #-}
 
 module Idable where
 
 class Eq (Id a) => Idable a where
   type Id a
+  type IdTrans a
   ident :: a -> Id a
+  idTrans :: a -> IdTrans a
+  idTransRev :: Id a -> IdTrans a -> a
 
-instance Eq a => Idable (a, b) where
+instance forall a b. Eq a => Idable (a, b) where
   type Id (a, b) = a
+  type IdTrans (a, b) = b
   ident = fst
+  idTrans = snd
+  idTransRev = (,)
 
 instance Eq a => Idable (a, b, c) where
   type Id (a, b, c) = a
-  ident (x, y, z)= x
+  type IdTrans (a, b, c) = (b, c)
+  ident (x, y, z) = x
+  idTrans (x, y, z) = (y, z)
+  idTransRev x (y, z) = (x, y, z)
 
 deleteIdable :: Idable a => Id a -> [a] -> [a]
 deleteIdable x xs = filter (\y -> x /= ident y) xs
 
-lookupId :: Idable a => Id a -> [a] -> Maybe a
-lookupId id xs = lookup id $ zip (map ident xs) xs
-
-lookupIdT :: (Foldable t, Idable a) => Id a -> t a -> Maybe a
-lookupIdT id xs = foldl f Nothing xs
+lookupId :: (Foldable t, Idable a) => Id a -> t a -> Maybe (IdTrans a)
+lookupId id xs = idTrans <$> foldl f Nothing xs
   where
     f x y = if ident y == id 
       then Just y
       else x
 
 -- Assume f preserves ident
-modifyIdable :: Idable a => Id a -> (a -> a) -> [a] -> [a]
-modifyIdable id f xs = xs'
-  where
-    xs' = case lookupId id xs of
-      Just y -> (f y) : deleteIdable id xs
-      Nothing -> xs
+--modifyIdable :: Idable a => Id a -> (IdTrans a -> IdTrans a) -> [a] -> [a]
+--modifyIdable id f xs = xs'
+  --where
+    --xs' = case lookupId id xs of
+      --Just y -> (f y) : deleteIdable id xs
+      --Nothing -> xs
 
-modifyIdableT :: (Functor t, Idable a) => Id a -> (a -> a) -> t a -> t a
-modifyIdableT idx f xs = xs'
+modifyIdable :: (Functor t, Idable a) => Id a -> (IdTrans a -> IdTrans a) -> t a -> t a
+modifyIdable idx f xs = xs'
   where
     g x = if ident x == idx
-      then f x
+      then idTransRev idx $ f (idTrans x)
       else x
     xs' = fmap g xs
