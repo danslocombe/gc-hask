@@ -1,18 +1,21 @@
-{-# LANGUAGE TypeInType             #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE PolyKinds             #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE TypeFamilyDependencies  #-}
 {-# LANGUAGE KindSignatures        #-}
+{-# LANGUAGE RecordWildCards        #-}
+{-# LANGUAGE Rank2Types        #-}
 
 module PonyTypes where
+
+import Data.List (intersperse)
 
 import GHC.TypeLits
 import Idable
@@ -25,7 +28,7 @@ newtype ObjFieldId = ObjFieldId Int deriving (Eq, Ord, Show, Num)
 
 data ObjectDescr = Null | ObjectDescr ActorId ObjectId deriving (Eq, Show)
 
-data Path = Path ActFieldId [ObjFieldId]
+data Path = Path ActFieldId [ObjFieldId] deriving (Eq, Show)
 
 data ActorState = 
   ActorCollecting | ActorSending | ActorReceving | ActorBehaviour | ActorIdle
@@ -39,14 +42,33 @@ data Actor a = Actor
   , freshFieldId :: ActFieldId
   , getActorState :: ActorState
   , getObjects :: [Object a] 
+  , getRequestQueue :: [Request]
+  , getMessageQueue :: [Message]
+  , getBehaviour :: BehaviourId -> Behaviour
   } deriving (Functor, Foldable)
 
 data Object a = Object 
   { getOwner :: ActorId
   , getObjFields :: [(ObjFieldId, Capability, ObjectDescr)]
   , getObjectId :: ObjectId
-  , getItem :: a
+  , getItem :: Maybe a
   } deriving (Functor, Foldable)
+
+newtype BehaviourId = BehaviourId Int deriving (Eq, Show, Num)
+
+data Behaviour = Behaviour ActFieldId [Request]
+
+data Message
+  = App BehaviourId ObjectDescr
+  | Orca ObjectDescr Int
+  deriving (Eq, Show)
+
+data Request
+  = AssignFieldNew ActFieldId
+  | AssignObjFieldNew Path ObjFieldId
+  | AssignField Path ActFieldId
+  | AssignObjField Path Path ObjFieldId
+  | Send ActFieldId ActorId BehaviourId
 
 data Config a = Config 
   { getActors :: [Actor a]
@@ -68,8 +90,17 @@ instance Idable (Object a) where
   idTrans = id
   idTransRev = seq
 
+
+instance Show a => Show (Actor a) where
+  show Actor{..} = f 
+    [ "Id = " ++ show getActorId
+    , "Fields = " ++ show getActFields
+    , "State = " ++ show getActorState
+    , "MessageQueue = " ++ show getMessageQueue
+    ]
+    where f = concat . (intersperse "\n")
+
 deriving instance Show a => Show (Object a)
-deriving instance Show a => Show (Actor a)
 deriving instance Show a => Show (Config a)
 
 class IntExtractable a where
