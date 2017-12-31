@@ -11,6 +11,10 @@ instance Eq a => Idable (a, b) where
   type Id (a, b) = a
   ident = fst
 
+instance Eq a => Idable (a, b, c) where
+  type Id (a, b, c) = a
+  ident (x, y, z)= x
+
 deleteIdable :: Idable a => Id a -> [a] -> [a]
 deleteIdable x xs = filter (\y -> x /= ident y) xs
 
@@ -31,3 +35,11 @@ modifyIdable id f xs = xs'
     xs' = case lookupId id xs of
       Just y -> (f y) : deleteIdable id xs
       Nothing -> xs
+
+modifyIdableT :: (Functor t, Idable a) => Id a -> (a -> a) -> t a -> t a
+modifyIdableT idx f xs = xs'
+  where
+    g x = if ident x == idx
+      then f x
+      else x
+    xs' = fmap g xs
