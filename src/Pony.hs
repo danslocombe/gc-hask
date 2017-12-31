@@ -7,12 +7,6 @@ import Data.List
 import Data.Maybe (fromJust)
 import Control.Monad
 
-import Data.Graph.Inductive.Graph hiding (Path)
-import Data.Graph.Inductive.PatriciaTree
-import Data.Graph.Inductive.Example
-import Data.GraphViz  hiding (Path)
-import qualified Data.GraphViz.Printing as GVP
-
 import Idable
 import PonyTypes
 
@@ -33,57 +27,6 @@ import PonyTypes
 -- Rendering to GraphViz
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
-draw :: Applicative m => Config a -> m GVP.Doc 
-draw = GVP.text . GVP.renderDot . toDot . defaultVis . toGraph
-
-defaultVis :: (Graph gr) => gr (Int, Bool) el -> DotGraph Node
-defaultVis = graphToDot dotparams
-
-dotparams :: GraphvizParams Int (Int, Bool) el Int (Int, Bool)
-dotparams = Params 
-  { isDirected       = True
-  , globalAttributes = []
-  , clusterBy        = clustBy
-  , isDotCluster     = const True
-  , clusterID        = Num . Int
-  , fmtCluster       = clFmt
-  , fmtNode          = const []
-  , fmtEdge          = const []
-  }
-  where
-    clustBy (n, l@(x, _)) = C (x) $ N (n, l)
-    clFmt m = [GraphAttrs [toLabel $ ""]]
-
-dotty :: DotGraph Node
-dotty = defaultVis dangraph
-  where
-    dangraph :: Gr (Int, Bool) ()
-    dangraph = mkGraph [(1, (1, False)), (2, (2, False))] (labUEdges [(1, 2)])
-
-toGraph :: Config a -> Gr (Int, Bool) ()
-toGraph Config{..} = mkGraph nodes (labUEdges arcs)
-  where
-    objs = concatMap (\a -> getObjects a) getActors
-
-    -- Nodes
-    nodeObj = map (\o -> (getObjectId o, (getOwner o, False))) objs
-    nodeAct = map (\a -> (-getActorId a, (getActorId a, True))) getActors
-
-    g :: (IntExtractable a, IntExtractable b) => (a, (b, c)) -> (Int, (Int, c))
-    g = (\(x, (y, z)) -> (intExtract x, (intExtract y, z)))
-    nodes = map g nodeObj ++ map g nodeAct
-
-    -- Arcs
-    f0 o (_, _, ObjectDescr _ x) = [(getObjectId o, x)]
-    f0 _ _ = []
-    arcsObj = concatMap (\o -> concatMap (f0 o) (getObjFields o)) objs
-    f1 a (_, _, ObjectDescr _ x) = [(-(getActorId a), x)]
-    f1 _ _ = []
-    arcsAct = concatMap (\a -> concatMap (f1 a) (getActFields a)) getActors
-    h :: (IntExtractable a, IntExtractable b) => (a, b) -> (Int, Int)
-    h = (\(x, y) -> (intExtract x, intExtract y))
-    arcs = map h arcsObj ++ map h arcsAct
-
 o1 = Object 1 [(1, Iso, Null) ] 1 ()
 a1 = Actor 1 [(1, Iso,  ObjectDescr 1 1), (2, Iso, Null)] 3 ActorIdle [o1]
 o2 = Object 2 [] 2 ()
@@ -94,7 +37,7 @@ cfg1 = Config [a1, a2] 3 3
 cfg2 = assignActFieldNew () 1 2 cfg1
 cfg3 = assignActFieldNew () 2 2 cfg2
 cfg4 = fromJust $ reassignPath 1 (Path 2 []) (Path 1 []) 1 cfg3
-cfg5 = sendObject 1 1 2 2 cfg4
+cfg5 = fromJust $ sendObject 1 1 2 2 cfg4
 --
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --

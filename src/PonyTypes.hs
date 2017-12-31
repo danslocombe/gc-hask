@@ -18,10 +18,10 @@ import GHC.TypeLits
 import Idable
 import Data.Proxy
 
-newtype ActorId = ActorId Int deriving (Eq, Show, Num)
-newtype ObjectId = ObjectId Int deriving (Eq, Show, Num)
-newtype ActFieldId = ActFieldId Int deriving (Eq, Show, Num)
-newtype ObjFieldId = ObjFieldId Int deriving (Eq, Show, Num)
+newtype ActorId = ActorId Int deriving (Eq, Ord, Show, Num)
+newtype ObjectId = ObjectId Int deriving (Eq, Ord, Show, Num)
+newtype ActFieldId = ActFieldId Int deriving (Eq, Ord, Show, Num)
+newtype ObjFieldId = ObjFieldId Int deriving (Eq, Ord, Show, Num)
 
 data ObjectDescr = Null | ObjectDescr ActorId ObjectId deriving (Eq, Show)
 
