@@ -15,11 +15,12 @@ import PonyTypes
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 -- Todo
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
--- Some basic capabilities
---     Orca and App message queues
---     Scheduler
+-- Capabilities
 -- Random state / program generation
+--     QuickCheck
 -- Garbage collection protocol
+--     RCs
+--     Orca message queues
 -- Optimizations
 -- Instrumentation (Some writer monad)
 -- Move some stuff to type level? Fields actors etc
@@ -66,13 +67,101 @@ cfg3 = fromJust $ assignActFieldNew (Just ()) 2 2 cfg2
 cfg4 = fromJust $ reassignPath 1 (Path 2 []) (Path 1 []) 1 cfg3
 cfg5 = fromJust $ sendObject 1 1 2 2 cfg4
 --
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+
+basicActor aId bs = Actor 
+  { getActorId = aId 
+  , getActFields = [(1, Iso, Null), (2, Iso, Null)]
+  , freshFieldId = 3
+  , getActorState = ActorIdle
+  , getObjects = []
+  , getRequestQueue = []
+  , getMessageQueue = []
+  , getBehaviour = bs
+  }
+
+mkBehPong :: ActorId -> BehaviourId -> Behaviour
+mkBehPong target _ = Behaviour 1 [Send 1 target 1]
+
+ap1 = basicActor 1 (mkBehPong 2)
+ap2 = basicActor 2 (mkBehPong 1)
+
+cfgp1 = Config [ap1, ap2] 3 3
+cfgp2 = fromJust $ assignActFieldNew (Just ()) 1 1 cfgp1
+cfgp3 = fromJust $ sendObject 1 1 2 1 cfgp2
+
+pong = runConfig [1,2] cfgp3
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
 type ConfigMorph a = Config a -> Maybe (Config a)
+
+-- Todo
+scanlM :: Monad m => (a -> b -> m a) -> a -> [b] -> m [a]
+scanlM = undefined
+
+runConfig :: [ActorId] -> Config a -> [Config a]
+runConfig aids cfg = scanl ((fromJust .) . (flip execState)) cfg aidInf
+  where
+    aidInf = concat $ repeat aids
+
+execState :: ActorId -> ConfigMorph a
+execState aId cfg@Config{..} = do
+  act <- lookupId aId getActors
+  let f = case (getActorState act) of {
+
+    ActorIdle -> (case getMessageQueue act of {
+      [] -> execCollect;
+      m:ms -> (execRec aId m) . 
+             (modifyActor aId (\a -> a {getMessageQueue = ms}))
+             >=> setState aId ActorExec;
+    });
+
+    ActorExec -> (case getRequestQueue act of {
+      [] -> setState aId ActorIdle;
+      r:rs -> execOne aId;
+    }
+    );
+
+    -- Probably not needed
+    ActorRec -> undefined;
+    ActorSend -> undefined;
+    ActorCollect -> undefined;
+  }
+
+  f cfg
+  --f $ modifyActor aId (\a -> a {getActorState = newState) cfg
+  
+setState :: ActorId -> ActorState -> ConfigMorph a
+setState aId newState cfg 
+  = return $ modifyActor aId (\a -> a {getActorState = newState}) cfg
+-- TODO
+execCollect = return
+
+execRec :: ActorId -> Message -> ConfigMorph a
+
+execRec aId (App bId oDescr) cfg@Config{..} = do
+  act <- lookupId aId getActors
+
+  let Behaviour fId rs = getBehaviour act bId
+      act' = updateField fId oDescr act
+      act'' = act' {getRequestQueue = (getRequestQueue act') ++ rs}
+
+  return $ modifyActor aId (const (act'')) cfg
+
+execRec aId (Orca bId oDescr) cfg = return cfg --TODO
+
+-- Execute a request
+execOne :: ActorId -> ConfigMorph a
+execOne aId cfg@Config{..} = do
+  act <- lookupId aId getActors
+  case getRequestQueue act of
+    [] -> return cfg
+    (r:rs) -> let as' = modifyIdable aId (const (act {getRequestQueue = rs})) getActors
+              in execReq aId r (cfg {getActors = as'})
 
 execReq :: ActorId -> Request -> ConfigMorph a
 execReq aId req cfg@Config{..} = x cfg
   where
-    act = lookupId aId getActors
     x = case req of
       AssignFieldNew fId -> assignActFieldNew Nothing aId fId
       AssignObjFieldNew p oFid -> undefined
@@ -81,9 +170,9 @@ execReq aId req cfg@Config{..} = x cfg
       Send aFid target bId -> sendObject aId aFid target bId
     
 runBeh :: ActorId -> ObjectDescr -> Behaviour -> ConfigMorph a
-runBeh aId x (Behaviour fId rs) cfg@Config{..} = return $ cfg {getActors = as'}
+runBeh aId x (Behaviour fId rs) cfg@Config{..} = return cfg'
   where
-    as' = modifyIdable aId (f . updateField fId x) getActors
+    cfg' = modifyActor aId (f . updateField fId x) cfg
     f a = a {getRequestQueue = (getRequestQueue a) ++ rs}
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --

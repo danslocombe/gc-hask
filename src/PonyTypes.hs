@@ -31,7 +31,7 @@ data ObjectDescr = Null | ObjectDescr ActorId ObjectId deriving (Eq, Show)
 data Path = Path ActFieldId [ObjFieldId] deriving (Eq, Show)
 
 data ActorState = 
-  ActorCollecting | ActorSending | ActorReceving | ActorBehaviour | ActorIdle
+  ActorCollect | ActorSend | ActorRec | ActorExec | ActorIdle
   deriving Show
 
 data Capability = Val | Iso | Ref | Tag deriving (Eq, Show)
@@ -81,14 +81,14 @@ instance Idable (Actor a) where
   type IdTrans (Actor a) = Actor a
   ident = getActorId
   idTrans = id
-  idTransRev = seq
+  idTransRev = const id
 
 instance Idable (Object a) where
   type Id (Object a) = ObjectId
   type IdTrans (Object a) = Object a
   ident = getObjectId
   idTrans = id
-  idTransRev = seq
+  idTransRev = const id
 
 
 instance Show a => Show (Actor a) where
