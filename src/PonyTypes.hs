@@ -110,6 +110,8 @@ deriving instance Show a => Show (Config a)
 class IntExtractable a where
   intExtract :: a -> Int
 
+instance IntExtractable Int where
+  intExtract = id
 instance IntExtractable ActorId where
   intExtract (ActorId x) = x
 instance IntExtractable ObjectId where
