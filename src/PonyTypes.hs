@@ -45,6 +45,8 @@ data Actor a = Actor
   , getRequestQueue :: [Request]
   , getMessageQueue :: [Message]
   , getBehaviour :: BehaviourId -> Behaviour
+  --, getRcs :: ObjectDescr -> Maybe Int
+  , getRCs :: [(ObjectDescr,Int)]
   } deriving (Functor, Foldable)
 
 data Object a = Object 
@@ -69,6 +71,7 @@ data Request
   | AssignField Path ActFieldId
   | AssignObjField Path Path ObjFieldId
   | Send ActFieldId ActorId BehaviourId
+  deriving (Show)
 
 data Config a = Config 
   { getActors :: [Actor a]
@@ -97,6 +100,7 @@ instance Show a => Show (Actor a) where
     , "Fields = " ++ show getActFields
     , "State = " ++ show getActorState
     , "MessageQueue = " ++ show getMessageQueue
+    , "RCs = " ++ show getRCs
     ]
     where f = concat . (intersperse "\n")
 
