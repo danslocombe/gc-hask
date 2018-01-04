@@ -22,6 +22,14 @@ pongy = map (\(y, p) -> ("dot/pong/p" ++ show y, p)) pongx
 pongz = take 16 pongy
 execpong = mapM_ (uncurry drawFile) pongz
 
+
+drawN :: Int -> [ActorId] -> FilePath -> Config a -> IO ()
+drawN n ids fp cfg = mapM_ (uncurry drawFile) z
+  where
+    cfgsI = zip [0..] (runConfig ids cfg)
+    y = map (\(y, p) -> (fp ++ show y, p)) cfgsI
+    z = take 16 y
+
 drawFile :: FilePath -> Config a -> IO ()
 drawFile filename cfg = do
   let fileDot = filename ++ ".dot"
@@ -33,22 +41,22 @@ drawFile filename cfg = do
 draw :: Applicative m => Config a -> m GVP.Doc 
 draw = GVP.text . GVP.renderDot . toDot . defaultVis . toGraph
 
-data NodeId = NIdBot | NIdObj ActorId | NIdAct ActorId | NIdMsg ActorId deriving (Eq, Show)
+data NodeId = NIdBot | NIdObj ObjectId ActorId | NIdAct ActorId | NIdMsg ObjectId ActorId deriving (Eq, Show)
 
 instance Ord NodeId where
-  NIdObj x <= y = case y of
-    NIdObj z -> x <= z
-    NIdMsg _ -> True
+  NIdObj x _ <= y = case y of
+    NIdObj z _ -> x <= z
+    NIdMsg _ _ -> True
     NIdAct _ -> True
     NIdBot -> False
-  NIdMsg x <= y = case y of
-    NIdObj _ -> False
-    NIdMsg z -> x <= z
+  NIdMsg x _ <= y = case y of
+    NIdObj _ _ -> False
+    NIdMsg z _ -> x <= z
     NIdAct _ -> True
     NIdBot -> False
   NIdAct x <= y = case y of
-    NIdObj _ -> False
-    NIdMsg _ -> False
+    NIdObj _ _ -> False
+    NIdMsg _ _ -> False
     NIdAct z -> x <= z
     NIdBot -> False
 
@@ -69,22 +77,22 @@ dotparams = Params
   , fmtEdge          = fmtEdge
   }
   where
-    clustBy (n, l@(NIdObj x)) = C x $ N (n, l)
+    clustBy (n, l@(NIdObj _ x)) = C x $ N (n, l)
     clustBy (n, l@(NIdAct x)) = C x $ N (n, l)
-    clustBy (n, l@(NIdMsg x)) = C x $ N (n, l)
+    clustBy (n, l@(NIdMsg _ x)) = C x $ N (n, l)
     clustBy (n, l@(NIdBot)) = N (n, l)
 
     clFmt m = [GraphAttrs [toLabel $ "", Rank SourceRank]]
 
     label s x = Label $ StrLabel $ pack $ (s ++ show (intExtract x))
-    fmtNode (n, l@(NIdObj x))
+    fmtNode (n, l@(NIdObj x _))
       = [ label "Obj: " x
         ]
     fmtNode (n, l@(NIdAct x)) 
       = [ Shape DiamondShape
         , label "Actor: " x
         ]
-    fmtNode (n, l@(NIdMsg x))
+    fmtNode (n, l@(NIdMsg x _))
       = [ Shape BoxShape
         , label "App: " x
         ]
@@ -114,11 +122,11 @@ toGraph Config{..} = mkGraph nodes (labUEdges arcs)
         ) getActors
     nodeMessages
       = map (\(i, (_, a)) -> (messageIdStart + i,
-                         NIdMsg a)
+                              NIdMsg (ObjectId i) a)
       ) (zip [1..] msgs)
     nodeObj
       = map (\o -> (ObjectId objIdStart + getObjectId o,
-                    NIdObj (getOwner o))
+                    NIdObj (getObjectId o) (getOwner o))
       ) objs
 
     g :: (IntExtractable a) => (a, b) -> (Int, b)

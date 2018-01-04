@@ -8,6 +8,9 @@ import Data.List
 import Data.Maybe (fromJust)
 import Control.Monad
 import Control.Monad.Trans.Writer.Lazy
+import Data.Maybe
+
+import Debug.Trace
 
 import Idable
 import PonyTypes
@@ -18,9 +21,6 @@ import PonyTypes
 -- Capabilities
 -- Random state / program generation
 --     QuickCheck
--- Garbage collection protocol
---     RCs
---     Orca message queues
 -- Optimizations
 -- Instrumentation (Some writer monad)
 -- Move some stuff to type level? Fields actors etc
@@ -86,6 +86,9 @@ basicActor aId bs = Actor
 mkBehPong :: ActorId -> BehaviourId -> Behaviour
 mkBehPong target _ = Behaviour 1 [Send 1 target 1]
 
+behNone ::  ActFieldId -> BehaviourId -> Behaviour
+behNone i _ = Behaviour i []
+
 ap1 = basicActor 1 (mkBehPong 2)
 ap2 = basicActor 2 (mkBehPong 1)
 
@@ -94,23 +97,35 @@ cfgp2 = fromJust $ assignActFieldNew (Just ()) 1 1 cfgp1
 cfgp3 = modifyActor 1 (\a -> a {getActorState = ActorExec, getRequestQueue = [Send 1 2 1]}) cfgp2
 
 pong = runConfig [1,2] cfgp3
+
+behOverwrite :: ActFieldId -> BehaviourId -> Behaviour
+behOverwrite fId _ = Behaviour fId [AssignFieldNew fId]
+
+agc1 = basicActor 1 (behNone 2)
+agc2 = basicActor 2 (behOverwrite 2)
+
+cfggc1 = Config [agc1, agc2] 3 1
+cfggc2 = fromJust $ assignActFieldNew (Just ()) 1 1 cfggc1
+cfggc3 = fromJust $ doSend 1 1 1 2 cfggc2
+cfggc4 = fromJust $ assignActFieldNew (Just ()) 2 2 cfggc3
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 -- GC
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
-
-execCollect = return
 
 -- TODO add capabilities
 traceObj :: ObjectDescr -> Config a -> [ObjectDescr]
 traceObj = traceObj' []
 
 traceObj' :: [ObjectDescr] -> ObjectDescr -> Config a -> [ObjectDescr]
+traceObj' _ Null _ = []
 traceObj' marked oDescr cfg = if elem oDescr marked
   then []
   else ret
   where
     -- Todo error handling here
-    obj = fromJust $ lookupObject oDescr cfg
+    obj = case lookupObject oDescr cfg of
+      Just y -> y
+      _ -> error "HERE"
     thrd (x, y, z) = z
     children = map thrd $ getObjFields obj
     traceChild = \x -> traceObj' (oDescr:marked) x cfg
@@ -184,7 +199,7 @@ execState aId cfg@Config{..} = do
   let f = case (getActorState act) of {
 
     ActorIdle -> (case getMessageQueue act of {
-      [] -> execCollect;
+      [] -> doGC aId;
       m:ms -> (doRec aId m) . 
              (modifyActor aId (\a -> a {getMessageQueue = ms}))
              >=> setState aId ActorExec;
@@ -261,7 +276,42 @@ doRec aId (App bId oDescr) cfg@Config{..} = do
 
 doRec aId (Orca oDescr x) cfg 
   = return $ modifyActor aId (updateRC oDescr x) cfg
-  
+
+doGC :: ActorId -> ConfigMorph a
+doGC aId cfg@Config{..} = do
+  act <- lookupId aId getActors
+  let owned = map (\o -> (ObjectDescr aId (getObjectId o))) (getObjects act)
+      rced = mapMaybe 
+        (\(o, x) -> if x > 0 then Just o else Nothing) 
+        (getRCs act)
+      unreachable0 = union owned rced
+
+      fieldObjs  = map (\(_, _, x) -> x) (getActFields act)
+      locallyReachable = nub $ concat (map (\o -> traceObj o cfg) fieldObjs)
+      reachable0 = locallyReachable
+
+      reachable1 = intersect owned rced
+
+      collectable = unreachable0 \\ (union reachable0 reachable1)
+
+      (gcLocal, gcRemote) = partition 
+        (\(ObjectDescr aId' _) -> aId == aId') collectable
+
+      gcLocalIds = map (\(ObjectDescr _ i) -> i) gcLocal
+
+      objs' = [x | x <- getObjects act, not $ getObjectId x `elem` gcLocalIds]
+
+      cfg' = modifyActor aId (\a -> a {getObjects = objs'}) cfg
+
+      orcas = [Orca odescr (-rc) | (odescr, rc) <- getRCs act, odescr `elem` gcRemote]
+
+      cfg'' = foldl (flip distribOrca) cfg' orcas
+
+      rcs' = [(x, y) | (x, y) <- getRCs act, not (x `elem` gcRemote)]
+
+      cfg''' = modifyActor aId (\a -> a {getRCs = rcs'}) cfg''
+
+  return cfg'''
     
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 --
@@ -339,6 +389,7 @@ modifyObjectDeepDescr (ObjectDescr aid oid) = modifyObjectDeep aid oid
 -- -- -- -- -- --
 
 lookupObject :: ObjectDescr -> Config a -> Maybe (Object a)
+lookupObject Null _ = Nothing
 lookupObject (ObjectDescr aid oid) Config{..} = do
   act <- lookupId aid getActors
   lookupId oid (getObjects act)
