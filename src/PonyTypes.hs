@@ -174,6 +174,8 @@ instance IntExtractable ActFieldId where
   intExtract (ActFieldId x) = x
 instance IntExtractable ObjFieldId where
   intExtract (ObjFieldId x) = x
+instance IntExtractable BehaviourId where
+  intExtract (BehaviourId x) = x
 
 data a :-> b = a :-> b
 

@@ -110,6 +110,22 @@ cfggc3 = fromJust $ assignActPathNew (Just ()) 1 (Path 1 []) 1 cfggc2
 cfggc4 = fromJust $ assignActPathNew (Just ()) 1 (Path 1 []) 2 cfggc3
 cfggc5 = fromJust $ doSend 1 1 1 2 cfggc4
 cfggc6 = fromJust $ assignActFieldNew (Just ()) 2 2 cfggc5
+
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+
+behSendOn :: ActFieldId -> ActorId -> BehaviourId -> BehaviourId -> Behaviour
+behSendOn fId target tbId _ = Behaviour fId [Send fId target tbId ]
+
+aso1 = basicActor 1 (behNone 2)
+aso2 = basicActor 2 (behSendOn 2 3 1)
+aso3 = basicActor 3 (behOverwrite 2)
+
+cfgso1 = Config [aso1, aso2, aso3] 4 1 Nothing
+cfgso2 = fromJust $ assignActFieldNew (Just ()) 1 1 cfgso1
+cfgso3 = fromJust $ assignActPathNew (Just ()) 1 (Path 1 []) 1 cfgso2
+cfgso4 = fromJust $ assignActPathNew (Just ()) 1 (Path 1 []) 2 cfgso3
+cfgso5 = fromJust $ doSend 1 1 1 2 cfgso4
+
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 -- GC
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
@@ -143,8 +159,8 @@ updateRCSend ws a = foldl f (a, []) ws
     f (act, msgs) odescr =
       if owner odescr act
         then (updateRC odescr 1 act, msgs)
-        else if rcIsZero odescr act
-          then (updateRC odescr 256 act, Orca odescr 256 : msgs)
+        else if rcIsOne odescr act
+          then (updateRC odescr 255 act, Orca odescr 256 : msgs)
           else (updateRC odescr (-1) act, msgs)
 
 updateRCRec :: [ObjectDescr] -> Actor a -> Actor a
@@ -154,6 +170,12 @@ updateRCRec ws a = foldl f a ws
     f act odescr = if owner odescr act
       then updateRC odescr (-1) act
       else updateRC odescr 1 act
+
+rcIsOne :: ObjectDescr -> Actor a -> Bool
+rcIsOne odescr Actor{..} = case lookupId odescr getRCs of
+  Nothing -> error "Expected RC but wasn't found !"
+  Just x | x <= 0 -> error "Expected RC but was zero or less !"
+  Just x -> x == 1
 
 rcIsZero :: ObjectDescr -> Actor a -> Bool
 rcIsZero odescr Actor{..} = case lookupId odescr getRCs of
