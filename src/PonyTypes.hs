@@ -12,6 +12,7 @@
 {-# LANGUAGE KindSignatures        #-}
 {-# LANGUAGE RecordWildCards        #-}
 {-# LANGUAGE Rank2Types        #-}
+{-# LANGUAGE FlexibleInstances        #-}
 
 module PonyTypes where
 
@@ -20,6 +21,10 @@ import Data.List (intersperse)
 import GHC.TypeLits
 import Idable
 import Data.Proxy
+import Data.Graph.Inductive.Graph hiding (Path)
+import Data.Graph.Inductive.PatriciaTree
+import Test.QuickCheck
+import Control.Monad
 
 newtype ActorId = ActorId Int deriving (Eq, Ord, Show, Num)
 newtype ObjectId = ObjectId Int deriving (Eq, Ord, Show, Num)
@@ -73,10 +78,26 @@ data Request
   | Send ActFieldId ActorId BehaviourId
   deriving (Show)
 
+data Action = ActionGC ActorId
+            | ActionReceive ActorId
+            | ActionSetState ActorId ActorState
+            | ActionExecBeh ActorId
+
+instance Show Action where
+  show (ActionGC i)
+    = "Actor " ++ (show $ intExtract i) ++ " Garbage Collection"
+  show (ActionReceive i)
+    = "Actor " ++ (show $ intExtract i) ++ " Received"
+  show (ActionSetState i x)
+    = "Actor " ++ (show $ intExtract i) ++ " set to " ++ show x
+  show (ActionExecBeh i)
+    = "Actor " ++ (show $ intExtract i) ++ " Executed Behaviour"
+
 data Config a = Config 
   { getActors :: [Actor a]
   , freshActorId :: ActorId
   , freshObjectId :: ObjectId
+  , lastAction :: Maybe Action
   }
 
 instance Idable (Actor a) where
@@ -106,6 +127,39 @@ instance Show a => Show (Actor a) where
 
 deriving instance Show a => Show (Object a)
 deriving instance Show a => Show (Config a)
+
+
+instance Arbitrary (Gr Int ()) where
+  arbitrary = do
+    n <- getSize 
+    let actorCount = floor . sqrt . fromIntegral $ n
+    nodeActors <- replicateM n (choose (1, actorCount))
+    let nodes = zip [1..] nodeActors
+      --(\i -> choose (1, actorCount) >>= (\x -> return (i, x))) [1..n]
+
+    arcCountMult <- fromIntegral <$> choose (1 :: Int, 100)
+    let arcCount = floor $ arcCountMult * (fromIntegral n) * 0.1
+
+    arcs <- replicateM arcCount $ do {
+      x <- choose (1, n);
+      y <- choose (1, n);
+      return (x, y, ())
+    }
+    return $ mkGraph nodes arcs
+      
+instance Arbitrary (Config ()) where
+  arbitrary = do
+    undefined
+    --graph <- arbitrary
+    --let nodes = labNodes graph
+        --n = noNodes graph
+        --edges = labEdges graph
+        --objs = map (\(i, a) -> 
+          --Object 
+          --{ getOwner = ActorId a
+          --, getObjFields = [(f, Val, :w
+          --]
+  
 
 class IntExtractable a where
   intExtract :: a -> Int

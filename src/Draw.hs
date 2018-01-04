@@ -9,6 +9,8 @@ import Data.GraphViz  hiding (Path)
 import qualified Data.GraphViz.Printing as GVP
 import Data.GraphViz.Attributes.Complete
 import Data.Text.Lazy (pack)
+import Data.Maybe (fromJust)
+import Data.List
 
 import Idable
 import PonyTypes
@@ -28,7 +30,7 @@ drawN n ids fp cfg = mapM_ (uncurry drawFile) z
   where
     cfgsI = zip [0..] (runConfig ids cfg)
     y = map (\(y, p) -> (fp ++ show y, p)) cfgsI
-    z = take 16 y
+    z = take n y
 
 drawFile :: FilePath -> Config a -> IO ()
 drawFile filename cfg = do
@@ -39,36 +41,50 @@ drawFile filename cfg = do
   callCommand $ "dot -Tpng " ++ fileDot ++ " -o " ++ filePs
 
 draw :: Applicative m => Config a -> m GVP.Doc 
-draw = GVP.text . GVP.renderDot . toDot . defaultVis . toGraph
+draw cfg = GVP.text . GVP.renderDot . toDot . (defaultVis cfg) . toGraph $ cfg
 
-data NodeId = NIdBot | NIdObj ObjectId ActorId | NIdAct ActorId | NIdMsg ObjectId ActorId deriving (Eq, Show)
+data NodeId = NIdBot | NIdObj ObjectId ActorId | NIdAct ActorId | NIdMsg ObjectId ActorId | NIdOrca ObjectId ActorId deriving (Eq, Show)
 
 instance Ord NodeId where
   NIdObj x _ <= y = case y of
     NIdObj z _ -> x <= z
     NIdMsg _ _ -> True
+    NIdOrca _ _ -> True
     NIdAct _ -> True
     NIdBot -> False
   NIdMsg x _ <= y = case y of
     NIdObj _ _ -> False
     NIdMsg z _ -> x <= z
+    NIdOrca _ _ -> True
+    NIdAct _ -> True
+    NIdBot -> False
+  NIdOrca x _ <= y = case y of
+    NIdObj _ _ -> False
+    NIdMsg _ _ -> False
+    NIdOrca z _ -> x <= z
     NIdAct _ -> True
     NIdBot -> False
   NIdAct x <= y = case y of
     NIdObj _ _ -> False
     NIdMsg _ _ -> False
+    NIdOrca _ _ -> True
     NIdAct z -> x <= z
     NIdBot -> False
 
   NIdBot <= _ = False
 
-defaultVis :: (Graph gr) => gr NodeId el -> DotGraph Node
-defaultVis = graphToDot dotparams
+defaultVis :: (Graph gr) => Config a -> gr NodeId el -> DotGraph Node
+defaultVis cfg = graphToDot (dotparams cfg)
 
-dotparams :: GraphvizParams Int NodeId el ActorId NodeId
-dotparams = Params 
+renderRC :: (ObjectDescr, Int) -> String
+renderRC (ObjectDescr _ i, n) = show (intExtract i) ++ " -> " ++ show n
+
+renderRCs xs = concat $ intersperse "\n" (renderRC <$> xs)
+
+dotparams :: Config a -> GraphvizParams Int NodeId el ActorId NodeId
+dotparams cfg = Params 
   { isDirected       = True
-  , globalAttributes = [GraphAttrs([RankDir FromTop])]
+  , globalAttributes = [GraphAttrs([RankDir FromTop, masterLabel])]
   , clusterBy        = clustBy
   , isDotCluster     = const True
   , clusterID        = Num . Int . intExtract
@@ -80,9 +96,17 @@ dotparams = Params
     clustBy (n, l@(NIdObj _ x)) = C x $ N (n, l)
     clustBy (n, l@(NIdAct x)) = C x $ N (n, l)
     clustBy (n, l@(NIdMsg _ x)) = C x $ N (n, l)
+    clustBy (n, l@(NIdOrca _ x)) = C x $ N (n, l)
     clustBy (n, l@(NIdBot)) = N (n, l)
 
-    clFmt m = [GraphAttrs [toLabel $ "", Rank SourceRank]]
+    masterLabelText = case lastAction cfg of
+      Nothing -> ""
+      Just x -> show x
+    masterLabel = Label $ StrLabel $ pack masterLabelText
+
+    clFmt aId = 
+      [GraphAttrs [toLabel (renderRCs $ getRCs $ fromJust $ lookupActor aId cfg)
+      , Rank SourceRank]]
 
     label s x = Label $ StrLabel $ pack $ (s ++ show (intExtract x))
     fmtNode (n, l@(NIdObj x _))
@@ -95,6 +119,10 @@ dotparams = Params
     fmtNode (n, l@(NIdMsg x _))
       = [ Shape BoxShape
         , label "App: " x
+        ]
+    fmtNode (n, l@(NIdOrca x _))
+      = [ Shape BoxShape
+        , label "Orca: " x
         ]
     fmtNode (n, l@(NIdBot)) = [Style [SItem Invisible []]]
     fmtEdge (0, _, _)  = [Style [SItem Invisible []]]
@@ -120,10 +148,14 @@ toGraph Config{..} = mkGraph nodes (labUEdges arcs)
       = map (\a -> (ActorId actIdStart + getActorId a, 
                     NIdAct (getActorId a))
         ) getActors
-    nodeMessages
-      = map (\(i, (_, a)) -> (messageIdStart + i,
-                              NIdMsg (ObjectId i) a)
-      ) (zip [1..] msgs)
+
+    filterNode (i, (App _ _, a)) 
+      = (messageIdStart + i, NIdMsg (ObjectId i) a)
+    filterNode (i, (Orca _ _, a)) 
+      = (messageIdStart + i, NIdOrca (ObjectId i) a)
+
+    nodeMessages = map filterNode (zip [1..] msgs)
+
     nodeObj
       = map (\o -> (ObjectId objIdStart + getObjectId o,
                     NIdObj (getObjectId o) (getOwner o))
@@ -145,7 +177,9 @@ toGraph Config{..} = mkGraph nodes (labUEdges arcs)
     fmsg (i, (App _ (ObjectDescr _ oId), act)) 
       = [(messageIdStart + i, intExtract (ObjectId objIdStart + oId)),
          (messageIdStart + i, intExtract (ActorId actIdStart + act))]
-    fmsg _ = []
+    fmsg (i, (Orca (ObjectDescr _ oId) _, act)) 
+      = [(messageIdStart + i, intExtract (ObjectId objIdStart + oId)),
+         (messageIdStart + i, intExtract (ActorId actIdStart + act))]
     arcsMsg = concatMap fmsg (zip [1..] msgs)
 
     h :: (IntExtractable a, IntExtractable b) => (a, b) -> (Int, Int)

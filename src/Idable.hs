@@ -51,3 +51,6 @@ modifyIdable idx f xs = xs'
       then idTransRev idx $ f (idTrans x)
       else x
     xs' = fmap g xs
+
+setIdable :: Idable a => Id a -> IdTrans a -> [a] -> [a]
+setIdable idx y xs = (idTransRev idx y) : [ x | x <- xs, ident x /= idx ]

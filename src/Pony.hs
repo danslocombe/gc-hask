@@ -61,7 +61,7 @@ a2 = Actor
   , getRCs = []
   , getBehaviour = beh
   }
-cfg1 = Config [a1, a2] 3 3
+cfg1 = Config [a1, a2] 3 3 Nothing
 
 --
 cfg2 = fromJust $ assignActFieldNew (Just ()) 1 2 cfg1
@@ -92,7 +92,7 @@ behNone i _ = Behaviour i []
 ap1 = basicActor 1 (mkBehPong 2)
 ap2 = basicActor 2 (mkBehPong 1)
 
-cfgp1 = Config [ap1, ap2] 3 1
+cfgp1 = Config [ap1, ap2] 3 1 Nothing
 cfgp2 = fromJust $ assignActFieldNew (Just ()) 1 1 cfgp1
 cfgp3 = modifyActor 1 (\a -> a {getActorState = ActorExec, getRequestQueue = [Send 1 2 1]}) cfgp2
 
@@ -104,10 +104,12 @@ behOverwrite fId _ = Behaviour fId [AssignFieldNew fId]
 agc1 = basicActor 1 (behNone 2)
 agc2 = basicActor 2 (behOverwrite 2)
 
-cfggc1 = Config [agc1, agc2] 3 1
+cfggc1 = Config [agc1, agc2] 3 1 Nothing
 cfggc2 = fromJust $ assignActFieldNew (Just ()) 1 1 cfggc1
-cfggc3 = fromJust $ doSend 1 1 1 2 cfggc2
-cfggc4 = fromJust $ assignActFieldNew (Just ()) 2 2 cfggc3
+cfggc3 = fromJust $ assignActPathNew (Just ()) 1 (Path 1 []) 1 cfggc2
+cfggc4 = fromJust $ assignActPathNew (Just ()) 1 (Path 1 []) 2 cfggc3
+cfggc5 = fromJust $ doSend 1 1 1 2 cfggc4
+cfggc6 = fromJust $ assignActFieldNew (Just ()) 2 2 cfggc5
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 -- GC
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
@@ -196,18 +198,18 @@ runConfig aids cfg = scanl ((fromJust .) . (flip execState)) cfg aidInf
 execState :: ActorId -> ConfigMorph a
 execState aId cfg@Config{..} = do
   act <- lookupId aId getActors
-  let f = case (getActorState act) of {
+  let (f, action) = case (getActorState act) of {
 
     ActorIdle -> (case getMessageQueue act of {
-      [] -> doGC aId;
-      m:ms -> (doRec aId m) . 
+      [] -> (doGC aId, ActionGC aId);
+      m:ms -> ((doRec aId m) . 
              (modifyActor aId (\a -> a {getMessageQueue = ms}))
-             >=> setState aId ActorExec;
+             >=> setState aId ActorExec, ActionReceive aId);
     });
 
     ActorExec -> (case getRequestQueue act of {
-      [] -> setState aId ActorIdle;
-      r:rs -> execOne aId;
+      [] -> (setState aId ActorIdle, ActionSetState aId ActorIdle);
+      r:rs -> (execOne aId, ActionExecBeh aId);
     }
     );
 
@@ -217,7 +219,7 @@ execState aId cfg@Config{..} = do
     ActorCollect -> undefined;
   }
 
-  f cfg
+  f cfg {lastAction = Just action}
   --f $ modifyActor aId (\a -> a {getActorState = newState) cfg
 
 -- Execute a single request
@@ -326,18 +328,20 @@ assignActFieldNew :: Maybe a -> ActorId -> ActFieldId -> ConfigMorph a
 assignActFieldNew x aId fId cfg = return $ cfg''
    where
     (oDescr, cfg') = createObject x aId cfg
-    as = getActors cfg'
-    as' = modifyIdable aId (updateField fId oDescr) as
-    cfg'' = cfg' {getActors = as'}
+    cfg'' = modifyActor aId (updateField fId oDescr) cfg'
+
+-- Assign newly created object to an actor's field
+assignActPathNew :: Maybe a -> ActorId -> Path -> ObjFieldId -> ConfigMorph a
+assignActPathNew x aId path targetField cfg = cfg''
+   where
+    (oDescr, cfg') = createObject x aId cfg
+    cfg'' = modifyPathField path targetField aId oDescr cfg'
 
 -- Assign object at some relative path to a field of an actor
 reassignActField :: ActorId -> ActFieldId -> Path -> ConfigMorph a
-reassignActField aId targetId path cfg = return $ cfg {getActors = as'}
-  where
-    as = getActors cfg
-    actor = fromJust $ lookupId aId as
-    oId = undefined
-    as' = modifyIdable aId (updateField targetId oId) as
+reassignActField aId fId path cfg = do 
+  oDescr <- lookupPath path aId cfg
+  return $ modifyActor aId (updateField fId oDescr) cfg
 
 -- Assign object at some relative path to a field of an object at some other path
 reassignPath :: ActorId -> Path -> Path -> ObjFieldId -> ConfigMorph a
@@ -387,6 +391,9 @@ modifyObjectDeepDescr :: ObjectDescr -> (Object a -> Object a) -> Config a -> Co
 modifyObjectDeepDescr (ObjectDescr aid oid) = modifyObjectDeep aid oid
 
 -- -- -- -- -- --
+lookupActor :: ActorId -> Config a -> Maybe (Actor a)
+lookupActor aId Config{..} = do
+  lookupId aId getActors
 
 lookupObject :: ObjectDescr -> Config a -> Maybe (Object a)
 lookupObject Null _ = Nothing
@@ -405,6 +412,15 @@ lookupPath (Path afd ofds) aid cfg@Config{..} = do
     return ret
   }
   foldM f oDescrInit ofds
+
+modifyPathField :: Path -> ObjFieldId -> ActorId -> ObjectDescr -> ConfigMorph a
+modifyPathField path fId aId oDescr cfg = do
+  oDescrMod <- lookupPath path aId cfg
+  oMod <- lookupObject oDescrMod cfg
+  -- Todo capabilities
+  let fds' = setIdable fId (Iso, oDescr) $ getObjFields oMod
+      oMod' = oMod {getObjFields = fds'}
+  return $ modifyObjectDeepDescr oDescrMod (const oMod') cfg
 
 updateField :: ActFieldId -> ObjectDescr -> Actor a -> Actor a
 updateField fId odescr act@Actor{..} = act {getActFields = fs'}
