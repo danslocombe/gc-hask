@@ -93,11 +93,21 @@ instance Show Action where
   show (ActionExecBeh i)
     = "Actor " ++ (show $ intExtract i) ++ " Executed Behaviour"
 
+type RecFun a = ActorId -> Message -> ConfigMorph a
+type GCFun a = ActorId -> ConfigMorph a
+type SendFun a = ActorId -> ActFieldId -> BehaviourId -> ActorId -> ConfigMorph a
+
+type ConfigMorph a = Config a -> Maybe (Config a)
+
+
 data Config a = Config 
   { getActors :: [Actor a]
   , freshActorId :: ActorId
   , freshObjectId :: ObjectId
   , lastAction :: Maybe Action
+  , getRecFun :: RecFun a
+  , getGCFun :: GCFun a
+  , getSendFun :: SendFun a
   }
 
 instance Idable (Actor a) where
@@ -116,17 +126,19 @@ instance Idable (Object a) where
 
 
 instance Show a => Show (Actor a) where
-  show Actor{..} = f 
+  show Actor{..} = unlines
     [ "Id = " ++ show getActorId
     , "Fields = " ++ show getActFields
     , "State = " ++ show getActorState
     , "MessageQueue = " ++ show getMessageQueue
     , "RCs = " ++ show getRCs
     ]
-    where f = concat . (intersperse "\n")
 
 deriving instance Show a => Show (Object a)
-deriving instance Show a => Show (Config a)
+
+instance Show a => Show (Config a) where
+  show Config{..} = unlines
+    [ show getActors ]
 
 
 instance Arbitrary (Gr Int ()) where

@@ -15,6 +15,7 @@ import Data.List
 
 import Idable
 import PonyTypes
+import PonyCore
 import Pony
 import Data.Functor.Identity
 import System.Process
@@ -138,7 +139,7 @@ dotparams cfg = Params
 
     masterLabel = toLabel $ unlines [labelRcs]
     labelRcs = case lastAction cfg of
-      Nothing -> ""
+      Nothing -> "Initial State"
       Just x -> show x
 
     act aId = fromJust $ lookupActor aId cfg
