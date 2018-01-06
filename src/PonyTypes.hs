@@ -191,8 +191,8 @@ instance IntExtractable BehaviourId where
 
 data a :-> b = a :-> b
 
-data Object2 (ks :: [Nat :-> Capability]) a where
-  Object2 :: {getThing :: a} -> Object2 ks a
+--data Object2 (ks :: [Nat :-> Capability]) a where
+  --Object2 :: {getThing :: a} -> Object2 ks a
 
 data LC (ks :: [Nat]) where
   LC :: LC ks
