@@ -35,6 +35,10 @@ data Fields2 (ks :: [(Capability, Class)]) where
   EmpFields2 :: Fields2 '[]
   FieldCons2 :: (ObjectDescr) -> Fields2 ks -> Fields2 (k ': ks)
   -- Maybe add class to descr?
+  --
+data Fields3 (ks :: [(Capability, Class)]) where
+  EmpFields3 :: Fields3 '[]
+  FieldCons3 :: forall a k ks. (ObjectDescr2 a) -> Fields3 ks -> Fields3 (k ': ks)
 
 deriving instance Show (Fields ks)
 
@@ -138,20 +142,34 @@ e :: Env '[ '( 'Class "A", '[ '( 'Iso, 'Class "A" ) ] )
           , '( 'Class "B", '[] ) ]
 e = Env
 
-fields1 :: Fields2 '[ '( 'Iso , 'Class "A") ]
-fields1 = (ObjectDescr 1 1) `FieldCons2` EmpFields2
+data ObjectDescr2 (a :: Class) = ObjectDescr2 ActorId ObjectId
+
+fieldsA :: Fields2 '[ '( 'Iso , 'Class "A") ]
+fieldsA = (ObjectDescr 1 1) `FieldCons2` EmpFields2
 
 data Hide where
   Hide :: forall a. (Fields2 a) -> Hide
 
-data ObjStore where
-  EmpObjStore :: ObjStore
-  OSCons :: forall a. (ObjectDescr, Fields2 a) -> ObjStore -> ObjStore
+data ObjStore (as :: [Class]) where
+  EmpObjStore :: ObjStore '[]
+  OSCons :: forall a b xs. (ObjectDescr2 a, Fields3 b) -> ObjStore xs -> ObjStore (a ': xs)
 
-os = (ObjectDescr 1 1, (ObjectDescr 1 1 `FieldCons2` EmpFields2)) `OSCons` EmpObjStore
+lookupOS :: (b ~ (Lookup a xs), xs ~ (x1 ': x2)) => Env xs -> ObjStore (y ': ys) -> ObjectDescr2 a -> Maybe (Fields3 b)
+--lookupOS _ EmpObjStore _ = Nothing
+lookupOS e ((o, fs) `OSCons` os) x 
+  = undefined --if o == x then Just fs else undefined --lookupOS e os x
 
-readPathUnsafe :: forall e s n ps. KnownNat n => 
-                  Env e -> ObjStore ->  Fields2 s -> Path3 (n ': ps) -> ObjectDescr
+os = (ObjectDescr2 1 1, (ObjectDescr2 1 1 `FieldCons3` EmpFields3)) `OSCons` EmpObjStore
+
+fieldsToList :: Fields2 ks -> [ObjectDescr]
+fieldsToList EmpFields2 = []
+fieldsToList (o `FieldCons2` os) = o : (fieldsToList os)
+
+readPathUnsafe2 :: [(ObjectDescr, [ObjectDescr])] -> [ObjectDescr] -> [Int] -> ObjectDescr
+readPathUnsafe2 = undefined
+
+readPathUnsafe :: forall e s n ps os. KnownNat n => 
+                  Env e -> ObjStore os ->  Fields2 s -> Path3 (n ': ps) -> ObjectDescr
 readPathUnsafe _ _ fields SinglePath = readUnsafe2 nval fields
   where
     nval = fromIntegral $ natVal $ Proxy @n
@@ -161,8 +179,8 @@ readPathUnsafe _ _ fields SinglePath = readUnsafe2 nval fields
     --nval = fromIntegral $ natVal $ Proxy @n
     
 
-readPathf :: (ReadPath p s e, p ~ (p1 ': ps), KnownNat p1) => Env e -> ObjStore -> Fields2 s -> Path3 p -> ObjectDescr
-readPathf = readPathUnsafe --foldl readUnsafe  
+readPathf :: (ReadPath p s e, p ~ (p1 ': ps), KnownNat p1) => Env e -> ObjStore (y ': ys) -> Fields2 s -> Path3 p -> ObjectDescr
+readPathf = undefined -- readPathUnsafe --foldl readUnsafe  
   where
     --init =
 
