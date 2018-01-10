@@ -197,13 +197,19 @@ instance forall x xs. (KnownNat x, ToListy xs) => ToListy (x ': xs) where
 
 data Object2 (n :: Nat) ks = Object2
   { getOwner2 :: ActorId
-  -- getObjectId :: ObjectId
+  --, getObjectId :: ObjectId
   , getObjFields :: Fields ks
   }
 
---type family FormObjs (ks :: [Nat :-> [Capability]]) where
-  --FormObjs '[] = '[]
-  --FormObjs ((x ':-> ks) ': xs) = (Object2 x ks) ': (FormObjs xs)
+type family FormObjs (ks :: [Nat :-> [(Capability, Class)]]) where
+  FormObjs '[] = '[]
+  FormObjs ((x ':-> ks) ': xs) = (Object2 x ks) ': (FormObjs xs)
+
+--data ObjectCollection where
+  --ObjectCollection :: (FormObjs ks
+  
+--data Config2 (ks :: [Nat :-> [(Capability, Class)]]) where
+  --Config2 :: forall ks xs. ((FormObjs ks) ~ xs) => Listy xs -> Config2 ks
 
 data IdList as where
   EmpIDL :: IdList '[]

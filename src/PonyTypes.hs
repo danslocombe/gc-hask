@@ -54,8 +54,11 @@ data Actor a = Actor
   , getRCs :: [(ObjectDescr,Int)]
   } deriving (Functor, Foldable)
 
+data Mutability = Imm | Mutable deriving (Show, Eq)
+
 data Object a = Object 
   { getOwner :: ActorId
+  , getMutability :: Mutability
   , getObjFields :: [(ObjFieldId, Capability, ObjectDescr)]
   , getObjectId :: ObjectId
   , getItem :: Maybe a
@@ -71,8 +74,8 @@ data Message
   deriving (Eq, Show)
 
 data Request
-  = AssignFieldNew ActFieldId
-  | AssignObjFieldNew Path ObjFieldId
+  = AssignFieldNew Mutability ActFieldId
+  | AssignObjFieldNew Mutability Path ObjFieldId
   | AssignField Path ActFieldId
   | AssignObjField Path Path ObjFieldId
   | Send ActFieldId ActorId BehaviourId
@@ -139,7 +142,6 @@ deriving instance Show a => Show (Object a)
 instance Show a => Show (Config a) where
   show Config{..} = unlines
     [ show getActors ]
-
 
 instance Arbitrary (Gr Int ()) where
   arbitrary = do

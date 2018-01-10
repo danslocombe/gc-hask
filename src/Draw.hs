@@ -45,7 +45,7 @@ drawFile filename cfg = do
 draw :: Applicative m => Config a -> m GVP.Doc 
 draw cfg = GVP.text . GVP.renderDot . toDot . (defaultVis cfg) . toGraph $ cfg
 
-data NodeId = NIdBot | NIdObj ObjectId ActorId | NIdAct ActorId | NIdMsg ObjectId ActorId | NIdOrca ObjectId ActorId deriving (Eq, Show)
+data NodeId = NIdBot | NIdObj Mutability ObjectId ActorId | NIdAct ActorId | NIdMsg ObjectId ActorId | NIdOrca ObjectId ActorId deriving (Eq, Show)
 
 data DEdgeType = EdgeNormal | EdgeUnconstrain | EdgeInvisConstrain
 
@@ -90,10 +90,10 @@ instance Ord NodeId where
     NIdMsg z _ -> x <= z
     _ -> True
 
-  NIdObj x _ <= y = case y of
+  NIdObj _ x _ <= y = case y of
     NIdAct _ -> False
     NIdMsg _ _ -> False
-    NIdObj z _ -> x <= z
+    NIdObj _ z _ -> x <= z
     _ -> True
 
 defaultVis :: (Graph gr) => Config a -> gr NodeId DEdgeType -> DotGraph Node
@@ -118,7 +118,6 @@ renderMessage (Orca (ObjectDescr _ i) x)
 renderMessages [] = ""
 renderMessages xs = "[" ++ concat (intersperse ", " $ renderMessage <$> xs) ++ "]"
 
-
 dotparams :: Config a -> GraphvizParams Int NodeId DEdgeType ActorId NodeId
 dotparams cfg = Params 
   { isDirected       = True
@@ -131,7 +130,7 @@ dotparams cfg = Params
   , fmtEdge          = fmtEdge
   }
   where
-    clustBy (n, l@(NIdObj _ x)) = C x $ N (n, l)
+    clustBy (n, l@(NIdObj _ _ x)) = C x $ N (n, l)
     clustBy (n, l@(NIdAct x)) = C x $ N (n, l)
     clustBy (n, l@(NIdMsg _ x)) = C x $ N (n, l)
     clustBy (n, l@(NIdOrca _ x)) = C x $ N (n, l)
@@ -155,8 +154,11 @@ dotparams cfg = Params
     label s x = Label $ StrLabel $ pack $ (s ++ show (intExtract x))
     --labelClear s = Label $ StrLabel $ pack $ s
 
-    fmtNode (n, l@(NIdObj x _))
+    fmtNode (n, l@(NIdObj Mutable x _))
       = [ label "Obj: " x
+        ]
+    fmtNode (n, l@(NIdObj Imm x _))
+      = [ label "ImmObj: " x
         ]
     fmtNode (n, l@(NIdAct x)) 
       = [ Shape DiamondShape
@@ -208,7 +210,7 @@ toGraph Config{..} = mkGraph nodes (arcs)
 
     nodeObj
       = map (\o -> (ObjectId objIdStart + getObjectId o,
-                    NIdObj (getObjectId o) (getOwner o))
+                    NIdObj (getMutability o) (getObjectId o) (getOwner o))
       ) objs
 
     g :: (IntExtractable a) => (a, b) -> (Int, b)

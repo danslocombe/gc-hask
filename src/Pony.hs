@@ -37,8 +37,8 @@ import PonyCore
 beh = undefined
 --beh = const $ updateField 1
 
-o1 = Object 1 [(1, Iso, Null) ] 1 (Just ())
-o2 = Object 2 [] 2 (Just ())
+o1 = Object 1 Mutable [(1, Iso, Null)] 1 (Just ())
+o2 = Object 2 Mutable [] 2 (Just ())
 
 a1 = Actor 
   { getActorId = 1 
@@ -65,8 +65,8 @@ a2 = Actor
 cfg1 = Config [a1, a2] 3 3 Nothing vanillaRec vanillaGC vanillaSend
 
 --
-cfg2 = fromJust $ assignActFieldNew (Just ()) 1 2 cfg1
-cfg3 = fromJust $ assignActFieldNew (Just ()) 2 2 cfg2
+cfg2 = fromJust $ assignActFieldNew Mutable (Just ()) 1 2 cfg1
+cfg3 = fromJust $ assignActFieldNew Mutable (Just ()) 2 2 cfg2
 cfg4 = fromJust $ reassignPath 1 (Path 2 []) (Path 1 []) 1 cfg3
 cfg5 = fromJust $ sendObject 1 1 2 2 cfg4
 --
@@ -94,38 +94,43 @@ ap1 = basicActor 1 (mkBehPong 2)
 ap2 = basicActor 2 (mkBehPong 1)
 
 cfgp1 = Config [ap1, ap2] 3 1 Nothing vanillaRec vanillaGC vanillaSend
-cfgp2 = fromJust $ assignActFieldNew (Just ()) 1 1 cfgp1
+cfgp2 = fromJust $ assignActFieldNew Mutable (Just ()) 1 1 cfgp1
 cfgp3 = modifyActor 1 (\a -> a {getActorState = ActorExec, getRequestQueue = [Send 1 2 1]}) cfgp2
 
 pong = runConfig [1,2] cfgp3
 
 behOverwrite :: ActFieldId -> BehaviourId -> Behaviour
-behOverwrite fId _ = Behaviour fId [AssignFieldNew fId]
+behOverwrite fId _ = Behaviour fId [AssignFieldNew Mutable fId]
 
 agc1 = basicActor 1 (behNone 2)
 agc2 = basicActor 2 (behOverwrite 2)
 
 cfggc1 = Config [agc1, agc2] 3 1 Nothing vanillaRec vanillaGC vanillaSend
-cfggc2 = fromJust $ assignActFieldNew (Just ()) 1 1 cfggc1
-cfggc3 = fromJust $ assignActPathNew (Just ()) 1 (Path 1 []) 1 cfggc2
-cfggc4 = fromJust $ assignActPathNew (Just ()) 1 (Path 1 []) 2 cfggc3
+cfggc2 = fromJust $ assignActFieldNew Mutable (Just ()) 1 1 cfggc1
+cfggc3 = fromJust $ assignActPathNew Mutable (Just ()) 1 (Path 1 []) 1 cfggc2
+cfggc4 = fromJust $ assignActPathNew Mutable (Just ()) 1 (Path 1 []) 2 cfggc3
 cfggc5 = fromJust $ vanillaSend 1 1 1 2 cfggc4
-cfggc6 = fromJust $ assignActFieldNew (Just ()) 2 2 cfggc5
+cfggc6 = fromJust $ assignActFieldNew Mutable (Just ()) 2 2 cfggc5
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
 behSendOn :: ActFieldId -> ActorId -> BehaviourId -> BehaviourId -> Behaviour
 behSendOn fId target tbId _ = Behaviour fId [Send fId target tbId ]
 
+behTakeFd :: ActFieldId -> ActFieldId -> BehaviourId -> Behaviour
+behTakeFd fId target _ = Behaviour fId [AssignField (Path fId [1]) target]
+
 aso1 = basicActor 1 (behNone 2)
 aso2 = basicActor 2 (behSendOn 2 3 1)
-aso3 = basicActor 3 (behOverwrite 2)
+--aso3 = basicActor 3 (behOverwrite 2)
+aso3 = basicActor 3 (behTakeFd 2 2)
 
-cfgso1 = Config [aso1, aso2, aso3] 4 1 Nothing vanillaRec vanillaGC vanillaSend
-cfgso2 = fromJust $ assignActFieldNew (Just ()) 1 1 cfgso1
-cfgso3 = fromJust $ assignActPathNew (Just ()) 1 (Path 1 []) 1 cfgso2
-cfgso4 = fromJust $ assignActPathNew (Just ()) 1 (Path 1 []) 2 cfgso3
-cfgso5 = fromJust $ vanillaSend 1 1 1 2 cfgso4
+--cfgso1 = Config [aso1, aso2, aso3] 4 1 Nothing vanillaRec vanillaGC vanillaSend
+cfgso1 = Config [aso1, aso2, aso3] 4 1 Nothing lazyvalRec lazyvalGC lazyvalSend
+cfgso2 = fromJust $ assignActFieldNew Imm (Just ()) 1 1 cfgso1
+cfgso3 = fromJust $ assignActPathNew Imm (Just ()) 1 (Path 1 []) 1 cfgso2
+cfgso4 = fromJust $ assignActPathNew Imm (Just ()) 1 (Path 1 []) 2 cfgso3
+cfgso5 = fromJust $ lazyvalSend 1 1 1 2 cfgso4
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
@@ -204,8 +209,8 @@ execReq :: ActorId -> Request -> ConfigMorph a
 execReq aId req cfg@Config{..} = x cfg
   where
     x = case req of
-      AssignFieldNew fId -> assignActFieldNew Nothing aId fId
-      AssignObjFieldNew p oFid -> undefined
+      AssignFieldNew m fId -> assignActFieldNew m Nothing aId fId
+      AssignObjFieldNew m p oFid -> undefined
       AssignField p aFid -> reassignActField aId aFid p
       AssignObjField p assignP oFid -> reassignPath aId p assignP oFid
 
@@ -287,7 +292,7 @@ lazyvalSend :: ActorId -> ActFieldId -> BehaviourId -> ActorId -> ConfigMorph a
 lazyvalSend aId afId bId target cfg = do
   objDescr <- lookupPath (Path afId []) aId cfg
   act <- lookupId aId (getActors cfg)
-  let trace = traceObj objDescr cfg
+  let trace = traceObjStopImm objDescr cfg
       (act', orcas) = updateRCSend trace act
       -- Update actor
       cfg0 = modifyActor aId (const act') cfg
@@ -303,13 +308,13 @@ lazyvalRec aId (App bId oDescr) cfg@Config{..} = do
   let Behaviour fId rs = getBehaviour act bId
       act' = updateField fId oDescr act
       act'' = act' {getRequestQueue = (getRequestQueue act') ++ rs}
-      trace = traceObj oDescr cfg
+      trace = traceObjStopImm oDescr cfg
       act''' = updateRCRec trace act''
 
   return $ modifyActor aId (const (act''')) cfg
 
-lazyvalRec aId (Orca oDescr x) cfg 
-  = return $ modifyActor aId (updateRC oDescr x) cfg
+lazyvalRec aId orc@(Orca oDescr x) cfg 
+  = vanillaRec aId orc cfg
 
 lazyvalGC :: ActorId -> ConfigMorph a
 lazyvalGC aId cfg@Config{..} = do
@@ -318,31 +323,56 @@ lazyvalGC aId cfg@Config{..} = do
       rced = mapMaybe 
         (\(o, x) -> if x > 0 then Just o else Nothing) 
         (getRCs act)
-      unreachable0 = union owned rced
+      rcReachable = nub $ concatMap (flip traceObj cfg) rced
+      unreachable = union owned rced
 
       fieldObjs  = map (\(_, _, x) -> x) (getActFields act)
-      locallyReachable = nub $ concat (map (\o -> traceObj o cfg) fieldObjs)
+      locallyReachable = nub $ concatMap (\o -> traceObj o cfg) fieldObjs
       reachable0 = locallyReachable
 
-      reachable1 = intersect owned rced
+      reachable1 = intersect owned rcReachable
 
-      collectable = unreachable0 \\ (union reachable0 reachable1)
+      reachable = union reachable0 reachable1
 
+      collectable = unreachable \\ reachable
+
+      -- Split the collectable objects
       (gcLocal, gcRemote) = partition 
         (\(ObjectDescr aId' _) -> aId == aId') collectable
 
+      (gcRemoteImm, gcRemoteMut) = partition
+        (\o -> Imm == (getMutability $ fromJust (lookupObject o cfg))) gcRemote
+
+      gcRemoteImm' = trace ("Remote Imm " ++ show gcRemoteImm) gcRemoteImm
+      gcRemoteMut' = trace ("Remote Mut " ++ show gcRemoteMut) gcRemoteMut
+
+      -- Remove locally owned
       gcLocalIds = map (\(ObjectDescr _ i) -> i) gcLocal
 
       objs' = [x | x <- getObjects act, not $ getObjectId x `elem` gcLocalIds]
 
-      cfg' = modifyActor aId (\a -> a {getObjects = objs'}) cfg
+      act' = act {getObjects = objs'} 
 
-      orcas = [Orca odescr (-rc) | (odescr, rc) <- getRCs act, odescr `elem` gcRemote]
-
-      cfg'' = foldl (flip distribOrca) cfg' orcas
+      -- Update remotely owned mutable  
+      orcasMut = [Orca odescr (-rc) | (odescr, rc) <- getRCs act, odescr `elem` gcRemote]
 
       rcs' = [(x, y) | (x, y) <- getRCs act, not (x `elem` gcRemote)]
+      act'' = act' {getRCs = rcs'}
 
-      cfg''' = modifyActor aId (\a -> a {getRCs = rcs'}) cfg''
+      -- Update remotely owned imm  
 
-  return cfg'''
+      traces = concatMap (\o -> traceObj o cfg) gcRemoteImm'
+      toIncrease = intersect traces reachable
+
+      act''' = foldl (\a o -> updateRC o 1 a) act'' toIncrease
+      orcasImm = map (\o -> Orca o 1) toIncrease
+
+      orcas = orcasMut ++ orcasImm
+      orcas' = trace (show orcas) orcas
+
+      cfg' = foldl (flip distribOrca) cfg orcas'
+
+      cfg'' = modifyActor aId (const act''') cfg'
+
+
+  return cfg''

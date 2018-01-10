@@ -9,6 +9,8 @@ import PonyTypes
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
+thrd (x, y, z) = z
+
 -- TODO add capabilities
 traceObj :: ObjectDescr -> Config a -> [ObjectDescr]
 traceObj = traceObj' []
@@ -23,10 +25,28 @@ traceObj' marked oDescr cfg = if elem oDescr marked
     obj = case lookupObject oDescr cfg of
       Just y -> y
       _ -> error "HERE"
-    thrd (x, y, z) = z
     children = map thrd $ getObjFields obj
     traceChild = \x -> traceObj' (oDescr:marked) x cfg
     ret = oDescr : (concat $ map traceChild children)
+
+traceObjStopImm :: ObjectDescr -> Config a -> [ObjectDescr]
+traceObjStopImm = traceObjStopImm' []
+
+traceObjStopImm' :: [ObjectDescr] -> ObjectDescr -> Config a -> [ObjectDescr]
+traceObjStopImm' _ Null _ = []
+traceObjStopImm' marked oDescr cfg = if elem oDescr marked
+  then []
+  else ret
+  where
+    -- Todo error handling here
+    obj = case lookupObject oDescr cfg of
+      Just y -> y
+      _ -> error "HERE"
+    children = map thrd $ getObjFields obj
+    traceChild = \x -> traceObjStopImm' (oDescr:marked) x cfg
+    ret = case getMutability obj of
+      Mutable -> oDescr : (concat $ map traceChild children)
+      Imm -> [oDescr]
 
 rcIsOne :: ObjectDescr -> Actor a -> Bool
 rcIsOne odescr Actor{..} = case lookupId odescr getRCs of
@@ -81,17 +101,17 @@ runBeh aId x (Behaviour fId rs) cfg@Config{..} = return cfg'
     f a = a {getRequestQueue = (getRequestQueue a) ++ rs}
 
 -- Assign newly created object to an actor's field
-assignActFieldNew :: Maybe a -> ActorId -> ActFieldId -> ConfigMorph a
-assignActFieldNew x aId fId cfg = return $ cfg''
+assignActFieldNew :: Mutability -> Maybe a -> ActorId -> ActFieldId -> ConfigMorph a
+assignActFieldNew m x aId fId cfg = return $ cfg''
    where
-    (oDescr, cfg') = createObject x aId cfg
+    (oDescr, cfg') = createObject m x aId cfg
     cfg'' = modifyActor aId (updateField fId oDescr) cfg'
 
 -- Assign newly created object to an actor's field
-assignActPathNew :: Maybe a -> ActorId -> Path -> ObjFieldId -> ConfigMorph a
-assignActPathNew x aId path targetField cfg = cfg''
+assignActPathNew :: Mutability -> Maybe a -> ActorId -> Path -> ObjFieldId -> ConfigMorph a
+assignActPathNew m x aId path targetField cfg = cfg''
    where
-    (oDescr, cfg') = createObject x aId cfg
+    (oDescr, cfg') = createObject m x aId cfg
     cfg'' = modifyPathField path targetField aId oDescr cfg'
 
 -- Assign object at some relative path to a field of an actor
@@ -179,13 +199,13 @@ updateField fId odescr act@Actor{..} = act {getActFields = fs'}
     -- TODO: need to have correct capabilities
     fs' = modifyIdable fId (const (Iso, odescr)) getActFields
 
-createObject :: Maybe a -> ActorId -> Config a -> (ObjectDescr, Config a)
-createObject x aId cfg
+createObject :: Mutability -> Maybe a -> ActorId -> Config a -> (ObjectDescr, Config a)
+createObject m x aId cfg
   = (newDescr, cfg'')
   where
     (newId, cfg') = modifyFreshObjectId cfg
     newDescr = ObjectDescr aId newId
-    new = Object aId [] newId x
+    new = Object aId m [] newId x
     as' = modifyIdable aId addObjectToActor (getActors cfg')
     cfg'' = cfg' {getActors = as'}
     addObjectToActor a = a {getObjects = new : (getObjects a)}
