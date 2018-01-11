@@ -10,6 +10,7 @@
 {-# LANGUAGE OverlappingInstances #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module PonyTypes3 where
 
@@ -22,11 +23,14 @@ import Data.Proxy
 import Idable
 import qualified Data.Vector.HFixed.HVec as HV
 import qualified Data.Vector.HFixed as HV
+import Unsafe.Coerce
 
 data Fields (ks :: [(Capability, Class)]) where
   EmpFields :: Fields '[]
   FieldCons :: (ObjectDescr) -> Fields ks -> Fields (k ': ks)
-  -- Maybe add class to descr?
+
+deriving instance Show (Fields ks)
+
 
 data Path3 (ks :: [Nat]) where
   SinglePath :: KnownNat n => Path3 '[n]
@@ -57,8 +61,14 @@ type family Lookup (i :: a) (xs :: [(a, b)]) :: b where
 
 type family PlinkSnd (n :: Nat) (xs :: [(a, b)]) :: b where
   PlinkSnd 0 ( '( x, y ) ': xs ) = y
-  PlinkSnd (natSing n) ( '( x, y ) ': xs ) = PlinkSnd n xs
+  PlinkSnd (n) ( '( x, y ) ': xs ) = PlinkSnd (n - 1) xs
 
+type family Plink (n :: Nat) (xs :: [a]) :: a where
+  Plink 0 ( x ': xs ) = x
+  Plink (n) ( x ': xs ) = Plink (n - 1) xs
+
+class NonEmpty a
+instance NonEmpty (x ': xs)
 
 class WriteCapN (n :: Nat) (xs :: [ks]) where
 instance (WriteCap x) => WriteCapN 0 (x ': xs)
@@ -99,7 +109,7 @@ readUnsafe 0 (x `FieldCons` xs) = x
 readUnsafe n (_ `FieldCons` xs) = readUnsafe (n-1) xs
 
 readN :: forall n xs k ks. 
-  (KnownNat n, ReadCapN n xs, xs ~ (k : ks)) => 
+  (KnownNat n, ReadCapN n xs, NonEmpty xs) => 
     Proxy n -> Fields xs -> ObjectDescr
 readN _ fs = readUnsafe nval fs
   where
@@ -119,7 +129,7 @@ readPathf :: (ToListy p, ReadPath p s e, p ~ (p1 ': ps), KnownNat p1)
 readPathf _ store fs p = readPathUnsafe store flatFields flatPath
   where
     flatFields = fieldsToList fs
-    flatPath = pathToList p --undefined -- pathToList p
+    flatPath = pathToList p
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
@@ -129,7 +139,7 @@ modUnsafe 0 o (_ `FieldCons` xs) = o `FieldCons` xs
 modUnsafe n o (x `FieldCons` xs) = x `FieldCons` (modUnsafe (n-1) o xs)
 
 modifyN :: forall n xs k ks. 
-           (KnownNat n, WriteCapN n xs, xs ~ (k : ks)) =>
+           (KnownNat n, WriteCapN n xs, NonEmpty xs) =>
            Proxy n -> ObjectDescr -> Fields xs -> Fields xs
 modifyN _ oDescr fs = modUnsafe nval oDescr fs
   where
@@ -161,11 +171,27 @@ e = Env
 fieldsA :: Fields '[ '( 'Iso , 'Class "A") ]
 fieldsA = (ObjectDescr 1 1) `FieldCons` EmpFields
 
+fieldsB :: Fields '[ '( 'Iso , 'Class "A"), '( 'Val, 'Class "B" )]
+fieldsB = (ObjectDescr 1 1) `FieldCons` (Null `FieldCons` EmpFields)
+
+
 pathA :: Path3 '[0]
 pathA = SinglePath
 
+pathB :: Path3 '[1]
+pathB = SinglePath
+
+pathC :: Path3 '[0, 0]
+pathC = ChainPath SinglePath
+
 storeA :: ObjStore
 storeA = [(ObjectDescr 1 1, [ObjectDescr 1 1])]
+
+as0 = Actor3 1 fieldsB `ActStoreCons` EmpActStore
+os0 = Object3 1 1 fieldsA `ObjStoreCons` (Object3 1 2 EmpFields `ObjStoreCons` EmpObjStore)
+cfg0 = Config2 e as0 os0
+
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
 --data ObjStore (as :: [Class]) where
   --EmpObjStore :: ObjStore '[]
@@ -201,6 +227,17 @@ data Object2 (n :: Nat) ks = Object2
   , getObjFields :: Fields ks
   }
 
+data Object3 ks = Object3
+  { getOwner3 :: ActorId
+  , getObjectId3 :: ObjectId
+  , getObjFields3 :: Fields ks
+  } deriving Show
+
+data Actor3 ks = Actor3
+  { getId3 :: ActorId
+  , getActFields3 :: Fields ks
+  } deriving Show
+
 type family FormObjs (ks :: [Nat :-> [(Capability, Class)]]) where
   FormObjs '[] = '[]
   FormObjs ((x ':-> ks) ': xs) = (Object2 x ks) ': (FormObjs xs)
@@ -218,6 +255,131 @@ data IdList as where
 data Listy a = Listy
 
 newtype Class = Class Symbol --[(Capability, Class)]
+
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+
+data TypedObjStore (fs :: [[(Capability, Class)]])  where
+  EmpObjStore :: TypedObjStore '[]
+  ObjStoreCons :: Object3 x -> TypedObjStore xs -> TypedObjStore (x ': xs)
+
+deriving instance Show (TypedObjStore a)
+
+data TypedActStore (fs :: [[(Capability, Class)]])  where
+  EmpActStore :: TypedActStore '[]
+  ActStoreCons :: Actor3 x -> TypedActStore xs -> TypedActStore (x ': xs)
+
+deriving instance Show (TypedActStore a)
+
+plinkObjs :: forall n a b. (KnownNat n, b ~ Plink n a) => 
+             Proxy n -> TypedObjStore a -> Object3 b
+plinkObjs p (x `ObjStoreCons` xs) = if (nval == 0)
+  then unsafeCoerce x
+  else unsafeCoerce $ withNatOp (%-) p (Proxy @1) $ plinkObjs (Proxy @(n - 1)) xs
+    where
+      nval = fromIntegral $ natVal $ p
+
+plinkActs :: forall n a b. (KnownNat n, b ~ Plink n a) => 
+             Proxy n -> TypedActStore a -> Actor3 b
+plinkActs p (x `ActStoreCons` xs) = if (nval == 0)
+  then unsafeCoerce x
+  else unsafeCoerce $ withNatOp (%-) p (Proxy @1) $ plinkActs (Proxy @(n - 1)) xs
+    where
+      nval = fromIntegral $ natVal $ p
+
+updateObjStore :: forall n a b x. (KnownNat n, b ~ SubListElem n x a) => 
+                  Proxy n -> Object3 x -> TypedObjStore a -> TypedObjStore b
+updateObjStore p aNew (a `ObjStoreCons` as) = if (nval == 0)
+  then unsafeCoerce $ aNew `ObjStoreCons` as
+  else unsafeCoerce $ withNatOp (%-) p (Proxy @1) $ updateObjStore (Proxy @(n-1)) aNew as
+    where
+      nval = fromIntegral $ natVal $ p
+
+updateActStore :: forall n a b x. (KnownNat n, b ~ SubListElem n x a) => 
+                  Proxy n -> Actor3 x -> TypedActStore a -> TypedActStore b
+updateActStore p aNew (a `ActStoreCons` as) = if (nval == 0)
+  then unsafeCoerce $ aNew `ActStoreCons` as
+  else unsafeCoerce $ withNatOp (%-) p (Proxy @1) $ updateActStore (Proxy @(n-1)) aNew as
+    where
+      nval = fromIntegral $ natVal $ p
+
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+
+type family SubListElem (n :: Nat) (x :: a) (k :: [a]) :: [a] where
+  SubListElem 0 x (_ ': xs) = x ': xs
+  SubListElem n x (_ ': xs) = x ': (SubListElem (n - 1) x xs)
+
+weakenObjStore :: TypedObjStore ks -> ObjStore
+weakenObjStore EmpObjStore = []
+weakenObjStore (x `ObjStoreCons` xs)
+  = (odescr, fds) : weakenObjStore xs
+  where
+    odescr = ObjectDescr (getOwner3 x) (getObjectId3 x)
+    fds = fieldsToList $ getObjFields3 x
+
+data Config2 e os as = Config2 
+  { _getEnv :: Env e
+  , getActStore :: TypedActStore as
+  , getObjStore :: TypedObjStore os
+  }
+
+--modifyPathConfig :: (KnownNat n, Plink n ToListy p, WritePath p s e, p ~ (p1 ': ps), KnownNat p1) => 
+                    --Path p -> Proxy n -> Config2 e os as -> Config2 e os as
+--modifyPathConfig 
+
+readActFieldConfig ::
+  (KnownNat n0
+  , xs ~ (Plink n0 as)
+  , KnownNat n1
+  , ReadCapN n1 xs
+  , NonEmpty xs) =>
+  Proxy n0 -> Proxy n1 -> Config2 e os as -> ObjectDescr
+readActFieldConfig p0 p1 cfg@Config2{..} = x
+  where
+    act = plinkActs p0 getActStore
+    fds = getActFields3 act
+    x = readN p1 fds
+
+readPathConfig ::
+  (KnownNat n
+  , xs ~ (Plink n as)
+  , NonEmpty xs
+  , ToListy p
+  , ReadPath p xs e
+  , KnownNat p1
+  , p ~ (p1 ': ps))
+  => Proxy n -> Config2 e os as -> Path3 p -> Maybe ObjectDescr
+readPathConfig p cfg@Config2{..} path = x
+  where
+    act = plinkActs p getActStore
+    fds = getActFields3 act
+    ostore = weakenObjStore $ getObjStore
+    env = _getEnv
+    x = readPathf env ostore fds path 
+
+-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+
+modifyActFieldConfig :: forall n0 n1 xs as e os as1.
+  (KnownNat n0
+  , xs ~ (Plink n0 as)
+  , KnownNat n1
+  , WriteCapN n1 xs
+  --, as1 ~ SubListElem n0 xs as
+  , NonEmpty xs) =>
+  Proxy n0 -> Proxy n1 -> ObjectDescr -> Config2 e os as -> Config2 e os as
+modifyActFieldConfig p0 p1 oDescr cfg@Config2{..} = cfg {getActStore = store'}
+  where
+    act :: Actor3 xs
+    act = plinkActs p0 getActStore
+
+    fds = getActFields3 act
+    fds' = modifyN p1 oDescr fds
+
+    act' :: Actor3 xs
+    act' = act {getActFields3 = fds'}
+
+    -- We are only updating the value of a field not changing the types
+    store' :: TypedActStore as
+    store' = unsafeCoerce $ updateActStore p0 act' getActStore
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
