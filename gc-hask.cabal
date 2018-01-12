@@ -18,7 +18,8 @@ library
   exposed-modules:     Lib
                      , Pony
                      , PonyTypes
-                     , PonyTypesSafe
+                     , PonyTypeSafe
+                     , PonyTypeSafeExamples
                      , Idable
                      , Draw
   build-depends:       base >= 4.7 && < 5

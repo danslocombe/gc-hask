@@ -13,7 +13,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveGeneric #-}
 
-module PonyTypes3 where
+module PonyTypeSafe where
 
 import GHC.TypeLits
 import Data.Finite
@@ -28,6 +28,7 @@ import Utils
 
 
 newtype Class = Class Symbol
+data Env e = Env deriving Show
 
 data ObjectDescr2 (c :: Class) = 
   ObjectDescr2 ActorId ObjectId 
@@ -41,9 +42,9 @@ data Fields (ks :: [(Capability, Class)]) where
 deriving instance Show (Fields ks)
 
 
-data Path2 (ks :: [Nat]) where
-  SinglePath :: KnownNat n => Path2 '[n]
-  ChainPath :: (KnownNat x) => Path2 xs -> Path2 (x ': xs)
+data Path2 (act :: Nat) (ks :: [Nat]) where
+  SinglePath :: (KnownNat n, KnownNat a) => Path2 a '[n]
+  ChainPath :: (KnownNat x) => Path2 a xs -> Path2 a (x ': xs)
 
 type ObjStore = [(ObjectDescr, [ObjectDescr])]
 
@@ -146,13 +147,12 @@ readPathUnsafe store flatFields (p:ps) = do
   ctx <- lookup oDescr store
   readPathUnsafe store ctx ps 
 
-readPathf :: forall p s e p1 ps c.
+readPathf :: forall aid p s e c.
   ( ToListy p
-  , ReadPath p s e
-  , p ~ (p1 ': ps)
-  , KnownNat p1
+  , ReadPath (aid ': p) s e
+  , KnownNat aid
   , c ~ PathEndClass p s e
-  ) => Env e -> ObjStore -> Fields s -> Path2 p -> Maybe (ObjectDescr2 c)
+  ) => Env e -> ObjStore -> Fields s -> Path2 aid p -> Maybe (ObjectDescr2 c)
 readPathf _ store fs p = readPathUnsafe store flatFields flatPath
   where
     flatFields = fieldsToList fs
@@ -196,11 +196,12 @@ modifyPathUnsafeFirst store actor (actorField:path) new = do
 -- Unhappy with this
 modifyPathf :: 
   ( ToListy p
-  , WritePath p s e
-  , p ~ (p1 ': (p2 ': ps))
+  , WritePath (aid ': p) s e
+  , p ~ (p1 ': ps)
   , KnownNat p1
+  , KnownNat aid
   , c ~ PathEndClass p s e
-  ) => Env e -> ObjStore -> Fields s -> Path2 p -> ObjectDescr2 c -> Maybe ObjStore
+  ) => Env e -> ObjStore -> Fields s -> Path2 aid p -> ObjectDescr2 c -> Maybe ObjStore
 modifyPathf _ store fs p newVal
   = modifyPathUnsafeFirst store flatFields flatPath (weakenOD newVal) 
   where
@@ -208,35 +209,10 @@ modifyPathf _ store fs p newVal
     flatPath = pathToList p
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
-data Env e = Env deriving Show
-
-e :: Env '[ '( 'Class "A", '[ '( 'Iso, 'Class "A" ) ] )
-          , '( 'Class "B", '[] ) ]
-e = Env
-
-fieldsA :: Fields '[ '( 'Iso , 'Class "A") ]
-fieldsA = (ObjectDescr2 1 1) `FieldCons` EmpFields
-
-fieldsB :: Fields '[ '( 'Iso , 'Class "A"), '( 'Val, 'Class "B" )]
-fieldsB = (ObjectDescr2 1 1) `FieldCons` (Null2 `FieldCons` EmpFields)
-
-
-pathA :: Path2 '[0]
-pathA = SinglePath
-
-pathB :: Path2 '[1]
-pathB = SinglePath
-
-pathC :: Path2 '[0, 0]
-pathC = ChainPath SinglePath
 
 storeA :: ObjStore
 storeA = [(ObjectDescr 1 1, [ObjectDescr 1 1])]
 
-as0 = Actor2 1 fieldsB `ActStoreCons` EmpActStore
-os0 = Object2 1 1 fieldsA `ObjStoreCons` (Object2 1 2 EmpFields `ObjStoreCons` EmpObjStore)
-cfg0 = Config2 e as0 os0
--- 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
 weakenObjStore :: TypedObjStore ks -> ObjStore
@@ -277,8 +253,9 @@ upcastFields :: [ObjectDescr] -> Fields ks
 upcastFields [] = unsafeCoerce $ EmpFields
 upcastFields (x:xs) = unsafeCoerce $ upcastOD x `FieldCons` (upcastFields xs)
 
-pathToList :: forall ps. ToListy ps => Path2 ps -> [Int]
-pathToList _ = map fromIntegral $ toListy (Proxy @ps)
+pathToList :: forall a ps. (KnownNat a, ToListy ps) => Path2 a ps -> [Int]
+pathToList _ = n : (map fromIntegral $ toListy (Proxy @ps))
+  where n = fromIntegral (natVal (Proxy @a))
 
 class ToListy (xs :: [Nat]) where
   toListy :: Proxy xs -> [Integer]
@@ -367,19 +344,19 @@ readActFieldConfig p0 p1 cfg@Config2{..} = x
     fds = getActFields2 act
     x = readN p1 fds
 
-readPathConfig ::
-  (KnownNat n
-  , xs ~ (Plink n as)
+readPathConfig :: forall a xs as p e p1 ps c os.
+  (KnownNat a
+  , xs ~ (Plink a as)
   , NonEmpty xs
   , ToListy p
-  , ReadPath p xs e
+  , ReadPath (a ': p) xs e
   , KnownNat p1
   , p ~ (p1 ': ps)
   , c ~ PathEndClass p xs e
-  ) => Proxy n -> Config2 e os as -> Path2 p -> Maybe (ObjectDescr2 c)
-readPathConfig p cfg@Config2{..} path = x
+  ) => Path2 a p -> Config2 e os as -> Maybe (ObjectDescr2 c)
+readPathConfig path cfg@Config2{..} = x
   where
-    act = plinkActs p getActStore
+    act = plinkActs (Proxy @a) getActStore
     fds = getActFields2 act
     ostore = weakenObjStore $ getObjStore
     env = _getEnv
@@ -392,7 +369,6 @@ modifyActFieldConfig :: forall n0 n1 xs as e os as1 c.
   , xs ~ (Plink n0 as)
   , KnownNat n1
   , WriteCapN n1 xs
-  --, as1 ~ SubListElem n0 xs as
   , NonEmpty xs
   , c ~ PlinkSnd n1 xs
   ) => Proxy n0 -> Proxy n1 -> ObjectDescr2 c -> Config2 e os as -> Config2 e os as
@@ -412,18 +388,19 @@ modifyActFieldConfig p0 p1 oDescr cfg@Config2{..} = cfg {getActStore = store'}
     store' :: TypedActStore as
     store' = unsafeCoerce $ updateActStore p0 act' getActStore
 
-modifyPathConfig ::  forall n xs as p p1 p2 ps e c os.
-  (KnownNat n
-  , xs ~ (Plink n as)
+modifyPathConfig ::  forall xs as a p p1 ps e c os.
+  (KnownNat a
+  , xs ~ (Plink a as)
   , NonEmpty xs
-  , WritePath p xs e
+  , WritePath (a ': p) xs e
   , c ~ PathEndClass p xs e
-  , p ~ (p1 ': (p2 ': ps))
+  , p ~ (p1 ': ps)
   , ToListy p
   , KnownNat p1
-  ) => Proxy n -> Path2 p -> ObjectDescr2 c -> Config2 e os as -> Maybe (Config2 e os as)
-modifyPathConfig _ path new cfg@Config2{..} = do
-  let act = plinkActs (Proxy @n) getActStore
+  ) => Path2 a p -> ObjectDescr2 c -> Config2 e os as -> Maybe (Config2 e os as)
+modifyPathConfig path new cfg@Config2{..} = do
+
+  let act = plinkActs (Proxy @a) getActStore
       fds = getActFields2 act
 
       weakObjStore = weakenObjStore getObjStore
@@ -435,3 +412,4 @@ modifyPathConfig _ path new cfg@Config2{..} = do
 
   return $ cfg {getObjStore = store'}
 --
+
