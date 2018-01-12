@@ -22,9 +22,12 @@ import Data.Reflection
 import GHC.TypeLits.Witnesses
 import Data.Proxy
 import Idable
-import qualified Data.Vector.HFixed.HVec as HV
-import qualified Data.Vector.HFixed as HV
+--import qualified Data.Vector.HFixed.HVec as HV
+--import qualified Data.Vector.HFixed as HV
 import Unsafe.Coerce
+import Data.List
+import Utils
+
 
 newtype Class = Class Symbol --[(Capability, Class)]
 
@@ -77,6 +80,11 @@ type family Plink (n :: Nat) (xs :: [a]) :: a where
 
 class NonEmpty a
 instance NonEmpty (x ': xs)
+
+class AtLeastTwo a
+instance AtLeastTwo (x ': (y ': xs))
+
+instance AtLeastTwo a => NonEmpty a
 
 class WriteCapN (n :: Nat) (xs :: [ks]) where
 instance (WriteCap x) => WriteCapN 0 (x ': xs)
@@ -135,12 +143,11 @@ readN _ fs = readUnsafe nval fs
   where
     nval = fromIntegral $ natVal $ Proxy @n
 
--- Todo replace (!!)
 readPathUnsafe :: ObjStore -> [ObjectDescr] -> [Int] -> Maybe (ObjectDescr2 c)
 readPathUnsafe store flatFields [] = Nothing
-readPathUnsafe store flatFields [p] = return $ upcastOD $ flatFields !! p
+readPathUnsafe store flatFields [p] = upcastOD <$> flatFields !?! p
 readPathUnsafe store flatFields (p:ps) = do
-  let oDescr = flatFields !! p
+  oDescr <- flatFields !?! p
   ctx <- lookup oDescr store
   readPathUnsafe store ctx ps 
 
@@ -173,27 +180,40 @@ modifyN _ oDescr fs = modUnsafe nval (weakenOD oDescr) fs
   where
     nval = fromIntegral $ natVal $ Proxy @n
 
--- -- Todo replace (!!)
--- modifyPathUnsafe :: ObjStore -> Int -> [Int] -> ObjectDescr -> ObjStore
--- modifyPathUnsafe store curr [] _ = undefined
--- modifyPathUnsafe store curr [p] newVal = modifyIdable 
--- modifyPathUnsafe store curr (p:ps) newVal = undefined
--- 
--- modifyPathf :: 
---   ( ToListy p
---   , WritePath p s e
---   , p ~ (p1 ': ps)
---   , KnownNat p1
---   , c ~ PathEndClass p s e
---   ) => Env e -> ObjStore -> Fields s -> Path2 p -> ObjectDescr2 c -> ObjStore
--- modifyPathf _ store fs p newVal
---   = undefined -- modifyPathUnsafe store flatPath (weakenOD newVal)
---   where
---     flatFields = fieldsToList fs
---     flatPath = pathToList p
+modifyPathUnsafe :: ObjStore -> Int -> [Int] -> ObjectDescr -> Maybe ObjStore
+modifyPathUnsafe store cur [] _ = undefined
+modifyPathUnsafe store cur [p] newVal = do 
+  (oDescr, old) <- store !?! cur
+  let new = (oDescr, setByIndex p newVal old)
+  return $ setByIndex cur new store
+modifyPathUnsafe store cur (p:ps) newVal = do
+  (oDescr, fds) <- store !?! cur
+  fd <- fds !?! p
+  newCur <- idIndex fd store
+  modifyPathUnsafe store newCur ps newVal
+
+modifyPathUnsafeFirst :: ObjStore -> [ObjectDescr] -> [Int] -> ObjectDescr -> Maybe ObjStore
+modifyPathUnsafeFirst store actor (actorField:path) new = do
+  target <- actor !?! actorField
+  x <- idIndex target store
+  modifyPathUnsafe store x path new
+
+-- Unhappy with this
+modifyPathf :: 
+  ( ToListy p
+  , WritePath p s e
+  , p ~ (p1 ': (p2 ': ps))
+  , KnownNat p1
+  , c ~ PathEndClass p s e
+  ) => Env e -> ObjStore -> Fields s -> Path2 p -> ObjectDescr2 c -> Maybe ObjStore
+modifyPathf _ store fs p newVal
+  = modifyPathUnsafeFirst store flatFields flatPath (weakenOD newVal) 
+  where
+    flatFields = fieldsToList fs
+    flatPath = pathToList p
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
-data Env e = Env
+data Env e = Env deriving Show
 
 e :: Env '[ '( 'Class "A", '[ '( 'Iso, 'Class "A" ) ] )
           , '( 'Class "B", '[] ) ]
@@ -244,6 +264,18 @@ weakenObjStore (x `ObjStoreCons` xs)
     odescr = ObjectDescr (getOwner2 x) (getObjectId2 x)
     fds = fieldsToList $ getObjFields2 x
 
+-- Can you do this without unsafe coerce?
+-- Problem is that ks is dependent :/
+upcastObjStore :: ObjStore -> TypedObjStore ks
+upcastObjStore [] = unsafeCoerce EmpObjStore
+upcastObjStore ((ObjectDescr aid oid, fds) : xs)
+  = unsafeCoerce $ o `ObjStoreCons` (upcastObjStore xs)
+  where
+    o = Object2
+      { getOwner2 = aid
+      , getObjectId2 = oid
+      , getObjFields2 = (upcastFields fds)
+      }
 
 weakenOD :: ObjectDescr2 c -> ObjectDescr
 weakenOD Null2 = Null
@@ -256,6 +288,11 @@ upcastOD (ObjectDescr x y) = ObjectDescr2 x y
 fieldsToList :: Fields ks -> [ObjectDescr]
 fieldsToList EmpFields = []
 fieldsToList (o `FieldCons` os) = (weakenOD o) : (fieldsToList os)
+
+-- Also has unsafe coerce
+upcastFields :: [ObjectDescr] -> Fields ks
+upcastFields [] = unsafeCoerce $ EmpFields
+upcastFields (x:xs) = unsafeCoerce $ upcastOD x `FieldCons` (upcastFields xs)
 
 pathToList :: forall ps. ToListy ps => Path2 ps -> [Int]
 pathToList _ = map fromIntegral $ toListy (Proxy @ps)
@@ -279,6 +316,7 @@ data Actor2 ks = Actor2
   { getId2 :: ActorId
   , getActFields2 :: Fields ks
   } deriving Show
+
 -- 
 -- type family FormObjs (ks :: [Nat :-> [(Capability, Class)]]) where
 --   FormObjs '[] = '[]
@@ -348,7 +386,7 @@ data Config2 e os as = Config2
   { _getEnv :: Env e
   , getActStore :: TypedActStore as
   , getObjStore :: TypedObjStore os
-  }
+  } deriving Show
 
 readActFieldConfig ::
   (KnownNat n0
@@ -393,6 +431,7 @@ modifyActFieldConfig :: forall n0 n1 xs as e os as1 c.
   , NonEmpty xs
   , c ~ PlinkSnd n1 xs
   ) => Proxy n0 -> Proxy n1 -> ObjectDescr2 c -> Config2 e os as -> Config2 e os as
+
 modifyActFieldConfig p0 p1 oDescr cfg@Config2{..} = cfg {getActStore = store'}
   where
     act :: Actor2 xs
@@ -407,3 +446,27 @@ modifyActFieldConfig p0 p1 oDescr cfg@Config2{..} = cfg {getActStore = store'}
     -- We are only updating the value of a field not changing the types
     store' :: TypedActStore as
     store' = unsafeCoerce $ updateActStore p0 act' getActStore
+
+modifyPathConfig ::  forall n xs as p p1 p2 ps e c os.
+  (KnownNat n
+  , xs ~ (Plink n as)
+  , NonEmpty xs
+  , WritePath p xs e
+  , c ~ PathEndClass p xs e
+  , p ~ (p1 ': (p2 ': ps))
+  , ToListy p
+  , KnownNat p1
+  ) => Proxy n -> Path2 p -> ObjectDescr2 c -> Config2 e os as -> Maybe (Config2 e os as)
+modifyPathConfig _ path new cfg@Config2{..} = do
+  let act = plinkActs (Proxy @n) getActStore
+      fds = getActFields2 act
+
+      weakObjStore = weakenObjStore getObjStore
+
+  x <- modifyPathf _getEnv weakObjStore fds path new
+
+  let store' :: TypedObjStore os
+      store' = upcastObjStore  x
+
+  return $ cfg {getObjStore = store'}
+--

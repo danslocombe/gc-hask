@@ -54,3 +54,13 @@ modifyIdable idx f xs = xs'
 
 setIdable :: Idable a => Id a -> IdTrans a -> [a] -> [a]
 setIdable idx y xs = (idTransRev idx y) : [ x | x <- xs, ident x /= idx ]
+
+idIndex :: (Idable a) => Id a -> [a] -> Maybe Int
+idIndex id xs = idIndex' id (zip [0..] xs)
+
+idIndex' :: (Idable a) => Id a -> [(Int, a)] -> Maybe Int
+idIndex' id [] = Nothing
+idIndex' id ((i, x):xs) = if ident x == id
+  then Just i
+  else idIndex' id xs
+

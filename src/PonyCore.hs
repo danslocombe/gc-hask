@@ -93,7 +93,7 @@ sendObject senderId senderField receiverId bId cfg@Config{..} = do
   return $ modifyActor receiverId (addToQueue appmsg) cfg'
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
---
+
 runBeh :: ActorId -> ObjectDescr -> Behaviour -> ConfigMorph a
 runBeh aId x (Behaviour fId rs) cfg@Config{..} = return cfg'
   where
