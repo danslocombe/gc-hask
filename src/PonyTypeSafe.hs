@@ -22,14 +22,12 @@ import Data.Reflection
 import GHC.TypeLits.Witnesses
 import Data.Proxy
 import Idable
---import qualified Data.Vector.HFixed.HVec as HV
---import qualified Data.Vector.HFixed as HV
 import Unsafe.Coerce
 import Data.List
 import Utils
 
 
-newtype Class = Class Symbol --[(Capability, Class)]
+newtype Class = Class Symbol
 
 data ObjectDescr2 (c :: Class) = 
   ObjectDescr2 ActorId ObjectId 
@@ -57,9 +55,6 @@ class ReadCap a where
 instance ReadCap 'Iso where
 instance ReadCap 'Ref where
 instance ReadCap 'Val where
-
---modifyHead :: WriteCap a => ObjectDescr -> Fields (a:as) -> Fields (a:as)
---modifyHead x (_ `FieldCons` xs) = x `FieldCons` xs
 
 type family Take (n :: Nat) (xs :: [k]) :: [k] where
   Take 0 xs = xs
@@ -243,18 +238,6 @@ os0 = Object2 1 1 fieldsA `ObjStoreCons` (Object2 1 2 EmpFields `ObjStoreCons` E
 cfg0 = Config2 e as0 os0
 -- 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
--- 
--- --data ObjStore (as :: [Class]) where
---   --EmpObjStore :: ObjStore '[]
---   --OSCons :: forall a b xs. (ObjectDescr2 a, Fields2 b) -> ObjStore xs -> ObjStore (a ': xs)
--- 
--- --lookupOS :: (b ~ (Lookup a xs), xs ~ (x1 ': x2)) => Env xs -> ObjStore (y ': ys) -> ObjectDescr2 a -> Maybe (Fields2 b)
--- --lookupOS _ EmpObjStore _ = Nothing
--- --lookupOS e ((o, fs) `OSCons` os) x 
---   -- = undefined --if o == x then Just fs else undefined --lookupOS e os x
--- 
--- --os = (ObjectDescr2 1 1, (ObjectDescr2 1 1 `FieldCons2` EmpFields2)) `OSCons` EmpObjStore
--- 
 
 weakenObjStore :: TypedObjStore ks -> ObjStore
 weakenObjStore EmpObjStore = []
@@ -317,24 +300,6 @@ data Actor2 ks = Actor2
   , getActFields2 :: Fields ks
   } deriving Show
 
--- 
--- type family FormObjs (ks :: [Nat :-> [(Capability, Class)]]) where
---   FormObjs '[] = '[]
---   FormObjs ((x ':-> ks) ': xs) = (Object2 x ks) ': (FormObjs xs)
--- 
--- --data ObjectCollection where
---   --ObjectCollection :: (FormObjs ks
---   
--- --data Config2 (ks :: [Nat :-> [(Capability, Class)]]) where
---   --Config2 :: forall ks xs. ((FormObjs ks) ~ xs) => Listy xs -> Config2 ks
--- 
--- data IdList as where
---   EmpIDL :: IdList '[]
---   IDLCons :: Id a -> IdTrans a -> IdList as -> IdList (a ': as)
---   
--- data Listy a = Listy
--- 
--- 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
 data TypedObjStore (fs :: [[(Capability, Class)]])  where
